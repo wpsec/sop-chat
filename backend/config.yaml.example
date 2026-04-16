@@ -35,6 +35,9 @@ auth:
   methods: [builtin]
   # 链式示例（builtin 优先，找不到再走 LDAP）：
   # methods: [builtin, ldap]
+  # OIDC / IDaaS 接入常见写法：
+  # methods: [builtin, oidc]   # 推荐：保留 builtin 管理员作为兜底账号
+  # methods: [oidc]            # 纯 IDaaS 登录
 
   # JWT 令牌设置
   jwt:
@@ -73,13 +76,47 @@ auth:
 
   # OIDC / OAuth2 认证（method: oidc 时启用）
   # 兼容 Keycloak、Dex、Okta、Azure AD 等标准 OIDC Provider
+  # 使用说明：
+  # 1. auth.methods 中必须包含 oidc，否则此段配置不会生效
+  # 2. IDaaS 控制台中的回调地址必须与 redirectURL 完全一致
+  # 3. 如果通过 Nginx / Ingress 暴露服务，建议使用 https 域名并显式填写 redirectURL
+  # 4. 建议保留至少一个 builtin 管理员账号，避免 OIDC 配错后无法进入系统
   # oidc:
   #   issuerURL: "https://accounts.example.com"
   #   clientId: "$OIDC_CLIENT_ID"
   #   clientSecret: "$OIDC_CLIENT_SECRET"
-  #   redirectURL: "http://your-server:8080/api/auth/oidc/callback"
-  #   scopes: [openid, profile, email]
-  #   usernameClaim: preferred_username  # 从哪个 claim 提取用户名
+  #   redirectURL: "https://your-server.example.com/api/auth/oidc/callback"
+  #   # 可选：留空时按当前访问地址动态推导；生产环境更推荐显式填写
+  #   # redirectURL: ""
+  #
+  #   # 可选：授权时申请的 scopes；为空时默认 openid, profile, email
+  #   scopes:
+  #     - openid
+  #     - profile
+  #     - email
+  #     - groups
+  #
+  #   # 可选：用于从 id_token 中提取用户信息的 claim
+  #   # 不填写时，系统会按常见标准 claim 自动回退
+  #   usernameClaim: preferred_username
+  #   emailClaim: email
+  #   displayNameClaim: name
+  #   groupsClaim: groups
+  #
+  #   # 可选：当外部组 / 角色未命中映射规则时，赋予这些本地角色
+  #   defaultRoles:
+  #     - viewer
+  #
+  #   # 可选：将 IDaaS 返回的外部组 / 角色映射为本地角色
+  #   # external 对应 groupsClaim（或默认 groups / roles）中的值
+  #   roleMappings:
+  #     - external: ops
+  #       roles:
+  #         - admin
+  #         - ops
+  #     - external: auditor
+  #       roles:
+  #         - audit
 
 # ─── 通知渠道配置（可选）────────────────────────────────────────────────────────
 # 所有 IM / 消息渠道统一在 channels 下管理，新增渠道只需追加子字段

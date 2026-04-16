@@ -16,8 +16,8 @@ type LoginRequest struct {
 
 // LoginResponse 登录响应
 type LoginResponse struct {
-	Token    string         `json:"token"`
-	User     *auth.User     `json:"user"`
+	Token string     `json:"token"`
+	User  *auth.User `json:"user"`
 }
 
 // handleLogin 处理登录请求
@@ -26,6 +26,12 @@ func (s *Server) handleLogin(c *gin.Context) {
 	if len(s.authModes) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "认证未配置，请在管理后台设置 auth.methods",
+		})
+		return
+	}
+	if !s.supportsPasswordLogin() {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "当前认证方式仅支持 IDaaS 登录，请使用单点登录入口",
 		})
 		return
 	}

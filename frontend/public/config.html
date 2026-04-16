@@ -318,13 +318,28 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <div class="card-title">
       <span class="card-title-icon" aria-hidden="true"></span> 内置用户
       <div class="spacer"></div>
+      <select id="builtin-import-mode" style="width:150px;height:28px;font-size:12px">
+        <option value="append">追加导入（推荐）</option>
+        <option value="overwrite">按用户名覆盖</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="downloadBuiltinUsersTemplate()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        下载模板
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="triggerBuiltinUsersImport()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 21V9"/><path d="M7 14l5-5 5 5"/><path d="M5 3h14"/></svg>
+        导入用户
+      </button>
       <button class="btn btn-ghost btn-sm" onclick="addUser()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         添加用户
       </button>
     </div>
     <div id="users-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    <input type="file" id="builtin-users-import-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleBuiltinUsersImportChange(event)">
+    <div id="builtin-import-feedback" class="reload-note" style="display:none;margin-top:10px"></div>
     <p style="font-size:12px;color:var(--text3);margin-top:10px">密码在保存时自动按 <code>MD5(passwordSalt + 明文密码)</code> 计算哈希；已有用户密码留空即可保持不变。</p>
+    <p style="font-size:12px;color:var(--text3);margin-top:8px">导入模板固定使用 <code>users</code> sheet，列为 <code>username</code>、<code>initial_password</code>、<code>roles</code>。导入接口会在服务端按当前 <code>passwordSalt</code> 计算哈希，不回显明文密码。</p>
   </div>
   <div class="card">
     <div class="card-title">
@@ -346,7 +361,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
           <option value="">选择认证方式...</option>
           <option value="builtin">builtin（内置账号）</option>
           <option value="ldap">ldap（LDAP，待实现）</option>
-          <option value="oidc">oidc（OpenID Connect，待实现）</option>
+          <option value="oidc">oidc（OpenID Connect / IDaaS）</option>
         </select>
         <button class="btn btn-ghost btn-sm" onclick="addMethod()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -389,6 +404,73 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
       <span class="hint">设置后，内置账号密码哈希规则为 MD5(salt + 明文密码)；留空则 MD5(明文密码)</span>
     </div>
   </div>
+  <div class="card">
+    <div class="card-title">
+      <span class="card-title-icon" aria-hidden="true"></span> OIDC / IDaaS 设置
+      <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addOIDCRoleMapping()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        添加角色映射
+      </button>
+    </div>
+    <div class="field-grid">
+      <div class="field">
+        <label>Issuer URL</label>
+        <input type="text" id="a-oidc-issuer" placeholder="https://id.example.com/realms/main">
+        <span class="hint">Provider 的发行者地址，将自动读取 discovery 文档。</span>
+      </div>
+      <div class="field">
+        <label>Client ID</label>
+        <input type="text" id="a-oidc-client-id" placeholder="sop-chat">
+      </div>
+      <div class="field">
+        <label>Client Secret</label>
+        <div class="input-wrap">
+          <input type="password" id="a-oidc-client-secret" autocomplete="new-password" placeholder="从 IDaaS 控制台复制">
+          <button class="eye-btn" onclick="toggleEye('a-oidc-client-secret',this)" tabindex="-1">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field">
+        <label>回调地址 Redirect URL</label>
+        <input type="text" id="a-oidc-redirect" placeholder="留空时按当前访问地址自动推导">
+        <span class="hint">常见格式：<code>https://app.example.com/api/auth/oidc/callback</code></span>
+      </div>
+      <div class="field">
+        <label>Scopes</label>
+        <input type="text" id="a-oidc-scopes" placeholder="openid, profile, email, groups">
+        <span class="hint">逗号分隔；为空时默认使用 <code>openid, profile, email</code></span>
+      </div>
+      <div class="field">
+        <label>默认角色</label>
+        <input type="text" id="a-oidc-default-roles" placeholder="viewer, audit">
+        <span class="hint">当外部组没有命中映射规则时，回退到这里。</span>
+      </div>
+      <div class="field">
+        <label>用户名 Claim</label>
+        <input type="text" id="a-oidc-username-claim" placeholder="preferred_username">
+      </div>
+      <div class="field">
+        <label>Email Claim</label>
+        <input type="text" id="a-oidc-email-claim" placeholder="email">
+      </div>
+      <div class="field">
+        <label>显示名 Claim</label>
+        <input type="text" id="a-oidc-display-name-claim" placeholder="name">
+      </div>
+      <div class="field">
+        <label>组 / 角色 Claim</label>
+        <input type="text" id="a-oidc-groups-claim" placeholder="groups">
+        <span class="hint">默认优先读取 <code>groups</code>，其次尝试 <code>roles</code>。</span>
+      </div>
+    </div>
+    <div class="list-section" style="margin-top:14px">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600">外部组 / 角色映射</div>
+      <div id="oidc-role-mappings-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      <p style="font-size:12px;color:var(--text3);margin-top:10px">将 IDaaS 返回的组名或角色名映射为本地角色，例如 <code>ops</code> → <code>admin,ops</code>。</p>
+    </div>
+  </div>
   <div class="reload-note">
     <strong>保存后立即生效：</strong>
     <span class="badge-hot">methods</span>
@@ -396,6 +478,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <span class="badge-hot">用户列表</span>
     <span class="badge-hot">密码</span>
     <span class="badge-hot">角色分配</span>
+    <span class="badge-hot">oidc</span>
     &nbsp;
     <strong>需重启：</strong>
     <span class="badge-cold">jwtSecretKey</span>
@@ -978,7 +1061,7 @@ function showStatus(type, msg, action) {
 const METHOD_LABELS = {
   builtin: '内置账号（builtinUsers）',
   ldap:    'LDAP 认证（待实现）',
-  oidc:    'OpenID Connect（待实现）',
+  oidc:    'OpenID Connect / IDaaS',
 };
 
 function renderMethods(methods) {
@@ -1104,6 +1187,104 @@ function collectUsers() {
   })).filter(u => u.name);
 }
 
+function downloadBuiltinUsersTemplate() {
+  const link = document.createElement('a');
+  link.href = '/admin-ui/api/auth/builtin-users/template?token=' + encodeURIComponent(token);
+  link.download = 'builtin-users-template.xlsx';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function triggerBuiltinUsersImport() {
+  const input = document.getElementById('builtin-users-import-file');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+function clearBuiltinUsersImportFeedback() {
+  const box = document.getElementById('builtin-import-feedback');
+  if (!box) return;
+  box.style.display = 'none';
+  box.innerHTML = '';
+}
+
+function showBuiltinUsersImportFeedback(type, title, lines) {
+  const box = document.getElementById('builtin-import-feedback');
+  if (!box) return;
+  const palette = {
+    success: { bg: 'var(--green-bg)', bd: 'var(--green-bd)', color: 'var(--green)' },
+    warning: { bg: 'var(--yellow-bg)', bd: 'var(--yellow-bd)', color: 'var(--yellow)' },
+    error:   { bg: 'var(--red-bg)', bd: 'var(--red-bd)', color: 'var(--red)' },
+  }[type] || { bg: 'var(--surface2)', bd: 'var(--border)', color: 'var(--text2)' };
+  const items = (lines || []).filter(Boolean);
+  box.style.display = 'block';
+  box.style.background = palette.bg;
+  box.style.border = '1px solid ' + palette.bd;
+  box.style.color = palette.color;
+  box.innerHTML =
+    '<div style="font-weight:600;color:inherit">' + esc(title) + '</div>' +
+    (items.length ? '<ul style="margin:8px 0 0 18px;padding:0;line-height:1.8">' + items.map(line => '<li>' + esc(line) + '</li>').join('') + '</ul>' : '');
+}
+
+function formatBuiltinUsersImportMessage(data) {
+  if (data && data.message) return data.message;
+  if (data && data.report) {
+    return '导入成功：共 ' + (data.report.totalRows || 0) + ' 行，新增 ' + (data.report.createdUsers || 0) + ' 个用户，更新 ' + (data.report.updatedUsers || 0) + ' 个用户';
+  }
+  return '导入成功并已应用';
+}
+
+async function handleBuiltinUsersImportChange(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('mode', document.getElementById('builtin-import-mode').value || 'append');
+
+  showStatus('loading', '正在导入内置用户...');
+  try {
+    const res = await fetch('/admin-ui/api/auth/builtin-users/import?token=' + encodeURIComponent(token), {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const details = Array.isArray(data.details) ? data.details : [];
+      showStatus('error', '导入失败：' + (data.error || '请求未通过'));
+      showBuiltinUsersImportFeedback('error', '导入失败', details.length ? details : [data.error || '请求未通过']);
+      switchTab('auth');
+      return;
+    }
+
+    await loadConfig();
+    const feedbackLines = [];
+    if (data.report) {
+      feedbackLines.push('导入模式：' + ((data.report.mode || 'append') === 'overwrite' ? '按用户名覆盖' : '追加导入'));
+      feedbackLines.push('处理行数：' + (data.report.totalRows || 0));
+      feedbackLines.push('新增用户：' + (data.report.createdUsers || 0));
+      feedbackLines.push('更新用户：' + (data.report.updatedUsers || 0));
+      feedbackLines.push('新增角色：' + (data.report.createdRoles || 0));
+    }
+    if (data.warningMessage) {
+      feedbackLines.push('提示：' + data.warningMessage);
+    }
+    if (data.detail) {
+      feedbackLines.push('热重载详情：' + data.detail);
+    }
+    showStatus(data.warning ? 'warning' : 'success', formatBuiltinUsersImportMessage(data));
+    showBuiltinUsersImportFeedback(data.warning ? 'warning' : 'success', data.warning ? '导入已完成，但有提示' : '导入成功', feedbackLines);
+    switchTab('auth');
+  } catch (e) {
+    showStatus('error', '导入失败：' + e.message);
+    showBuiltinUsersImportFeedback('error', '导入失败', [e.message]);
+  } finally {
+    event.target.value = '';
+  }
+}
+
 // ── Role list ─────────────────────────────────────────────────────────────
 function renderRoles(roles) {
   const container = document.getElementById('roles-list');
@@ -1156,6 +1337,80 @@ function collectRoles() {
     const users = Array.from(row.querySelectorAll('[data-role-users] .tag span:first-child')).map(el => el.textContent.trim());
     return { name, users };
   }).filter(r => r.name);
+}
+
+function splitCsv(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function joinCsv(values) {
+  return (values || []).join(', ');
+}
+
+function renderOIDCRoleMappings(mappings) {
+  const container = document.getElementById('oidc-role-mappings-list');
+  container.innerHTML = '';
+  (mappings || []).forEach(mapping => {
+    container.appendChild(makeOIDCRoleMappingRow(mapping.external, mapping.roles));
+  });
+}
+
+function makeOIDCRoleMappingRow(external, roles) {
+  const div = document.createElement('div');
+  div.className = 'list-row';
+  div.innerHTML =
+    '<input type="text" class="flex1" data-field="external" placeholder="外部组 / 角色，例如 ops" value="' + esc(external) + '">' +
+    '<input type="text" class="flex1" data-field="roles" placeholder="本地角色，逗号分隔，例如 admin, ops" value="' + esc(joinCsv(roles)) + '">' +
+    '<button class="btn btn-danger btn-icon" onclick="this.parentElement.remove()" title="删除映射">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>' +
+    '</button>';
+  return div;
+}
+
+function addOIDCRoleMapping() {
+  document.getElementById('oidc-role-mappings-list').appendChild(makeOIDCRoleMappingRow('', []));
+}
+
+function collectOIDCRoleMappings() {
+  return Array.from(document.querySelectorAll('#oidc-role-mappings-list .list-row')).map(row => {
+    const external = row.querySelector('[data-field=external]').value.trim();
+    const roles = splitCsv(row.querySelector('[data-field=roles]').value);
+    return { external, roles };
+  }).filter(mapping => mapping.external);
+}
+
+function populateOIDC(oidc) {
+  const cfg = oidc || {};
+  setVal('a-oidc-issuer', cfg.issuerURL || '');
+  setVal('a-oidc-client-id', cfg.clientId || '');
+  setVal('a-oidc-client-secret', cfg.clientSecret || '');
+  setVal('a-oidc-redirect', cfg.redirectURL || '');
+  setVal('a-oidc-scopes', joinCsv(cfg.scopes || []));
+  setVal('a-oidc-default-roles', joinCsv(cfg.defaultRoles || []));
+  setVal('a-oidc-username-claim', cfg.usernameClaim || '');
+  setVal('a-oidc-email-claim', cfg.emailClaim || '');
+  setVal('a-oidc-display-name-claim', cfg.displayNameClaim || '');
+  setVal('a-oidc-groups-claim', cfg.groupsClaim || '');
+  renderOIDCRoleMappings(cfg.roleMappings || []);
+}
+
+function collectOIDC() {
+  return {
+    issuerURL: val('a-oidc-issuer'),
+    clientId: val('a-oidc-client-id'),
+    clientSecret: val('a-oidc-client-secret'),
+    redirectURL: val('a-oidc-redirect'),
+    scopes: splitCsv(val('a-oidc-scopes')),
+    usernameClaim: val('a-oidc-username-claim'),
+    emailClaim: val('a-oidc-email-claim'),
+    displayNameClaim: val('a-oidc-display-name-claim'),
+    groupsClaim: val('a-oidc-groups-claim'),
+    defaultRoles: splitCsv(val('a-oidc-default-roles')),
+    roleMappings: collectOIDCRoleMappings(),
+  };
 }
 
 // ── DingTalk bot list ─────────────────────────────────────────────────────
@@ -2106,6 +2361,7 @@ function collectApiKeys() {
 // ── Populate form from data ───────────────────────────────────────────────
 function populate(data) {
   currentData = data;
+  clearBuiltinUsersImportFeedback();
   const g = data.server || data.global || {};
   renderCloudAccounts((data.cloudAccounts || []).length ? data.cloudAccounts : [{ id: DEFAULT_CLOUD_ACCOUNT_ID, provider: 'aliyun' }]);
   setVal('g-host', g.host || '0.0.0.0');
@@ -2123,6 +2379,7 @@ function populate(data) {
   setVal('a-salt', a.passwordSalt || '');
   renderUsers((a.local || {}).users);
   renderRoles((a.local || {}).roles);
+  populateOIDC(a.oidc || {});
 
   renderDingTalkBots(data.dingtalk || []);
   renderFeishuBots(data.feishu || []);
@@ -2162,6 +2419,7 @@ function collect() {
       jwtSecretKey: val('a-jwt-key'),
       jwtExpiresIn: val('a-jwt-exp') || '24h',
       passwordSalt: val('a-salt'),
+      oidc:         collectOIDC(),
       local: { users, roles },
     },
     dingtalk:       collectDingTalkBots(),

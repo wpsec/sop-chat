@@ -6,12 +6,14 @@ import Navbar from './Navbar';
 
 function Layout({ children }) {
   return (
-    <>
-      <Navbar />
-      <div className="app-content">
+    <div className="layout-shell">
+      <div className="layout-topbar">
+        <Navbar />
+      </div>
+      <div className="app-content layout-content">
         {children}
       </div>
-    </>
+    </div>
   );
 }
 

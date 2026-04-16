@@ -35,6 +35,12 @@ type RoleConfig struct {
 	Users []string `yaml:"user"`
 }
 
+// OIDCRoleMapping OIDC 外部组/角色到本地角色的映射规则
+type OIDCRoleMapping struct {
+	External string   `yaml:"external"`
+	Roles    []string `yaml:"roles,omitempty"`
+}
+
 // LDAPConfig LDAP 认证配置
 type LDAPConfig struct {
 	Host         string `yaml:"host"`
@@ -51,12 +57,17 @@ type LDAPConfig struct {
 
 // OIDCConfig OIDC / OAuth2 认证配置
 type OIDCConfig struct {
-	IssuerURL     string   `yaml:"issuerURL"`
-	ClientID      string   `yaml:"clientId"`
-	ClientSecret  string   `yaml:"clientSecret"`
-	RedirectURL   string   `yaml:"redirectURL"`
-	Scopes        []string `yaml:"scopes,omitempty"`
-	UsernameClaim string   `yaml:"usernameClaim,omitempty"`
+	IssuerURL        string            `yaml:"issuerURL"`
+	ClientID         string            `yaml:"clientId"`
+	ClientSecret     string            `yaml:"clientSecret"`
+	RedirectURL      string            `yaml:"redirectURL,omitempty"`
+	Scopes           []string          `yaml:"scopes,omitempty"`
+	UsernameClaim    string            `yaml:"usernameClaim,omitempty"`
+	EmailClaim       string            `yaml:"emailClaim,omitempty"`
+	DisplayNameClaim string            `yaml:"displayNameClaim,omitempty"`
+	GroupsClaim      string            `yaml:"groupsClaim,omitempty"`
+	DefaultRoles     []string          `yaml:"defaultRoles,omitempty"`
+	RoleMappings     []OIDCRoleMapping `yaml:"roleMappings,omitempty"`
 }
 
 // LoadYAMLConfig 从文件加载 YAML 配置

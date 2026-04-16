@@ -135,6 +135,7 @@ type configUIAuth struct {
 	JWTExpiresIn string         `json:"jwtExpiresIn"`           // maps to auth.jwt.expiresIn
 	PasswordSalt string         `json:"passwordSalt,omitempty"` // MD5(salt+password)
 	Local        *configUILocal `json:"local,omitempty"`
+	OIDC         *configUIOIDC  `json:"oidc,omitempty"`
 }
 
 type configUILocal struct {
@@ -150,6 +151,25 @@ type configUIUser struct {
 type configUIRole struct {
 	Name  string   `json:"name"`
 	Users []string `json:"users"`
+}
+
+type configUIOIDC struct {
+	IssuerURL        string                    `json:"issuerURL"`
+	ClientID         string                    `json:"clientId"`
+	ClientSecret     string                    `json:"clientSecret"`
+	RedirectURL      string                    `json:"redirectURL,omitempty"`
+	Scopes           []string                  `json:"scopes,omitempty"`
+	UsernameClaim    string                    `json:"usernameClaim,omitempty"`
+	EmailClaim       string                    `json:"emailClaim,omitempty"`
+	DisplayNameClaim string                    `json:"displayNameClaim,omitempty"`
+	GroupsClaim      string                    `json:"groupsClaim,omitempty"`
+	DefaultRoles     []string                  `json:"defaultRoles,omitempty"`
+	RoleMappings     []configUIOIDCRoleMapping `json:"roleMappings,omitempty"`
+}
+
+type configUIOIDCRoleMapping struct {
+	External string   `json:"external"`
+	Roles    []string `json:"roles"`
 }
 
 type configUIConversationRoute struct {
@@ -372,7 +392,6 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 
 	if presence.Auth {
 		ldapCfg := cfg.Auth.LDAP
-		oidcCfg := cfg.Auth.OIDC
 		cfg.Auth.Methods = req.Auth.Methods
 		cfg.Auth.JWT = config.JWTConfig{
 			SecretKey: req.Auth.JWTSecretKey,
@@ -380,7 +399,45 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 		}
 		cfg.Auth.PasswordSalt = req.Auth.PasswordSalt
 		cfg.Auth.LDAP = ldapCfg
-		cfg.Auth.OIDC = oidcCfg
+		if req.Auth.OIDC != nil {
+			hasOIDCValue := strings.TrimSpace(req.Auth.OIDC.IssuerURL) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.ClientID) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.ClientSecret) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.RedirectURL) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.UsernameClaim) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.EmailClaim) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.DisplayNameClaim) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.GroupsClaim) != "" ||
+				len(req.Auth.OIDC.Scopes) > 0 ||
+				len(req.Auth.OIDC.DefaultRoles) > 0 ||
+				len(req.Auth.OIDC.RoleMappings) > 0
+			if hasOIDCValue {
+				cfg.Auth.OIDC = &config.OIDCConfig{
+					IssuerURL:        req.Auth.OIDC.IssuerURL,
+					ClientID:         req.Auth.OIDC.ClientID,
+					ClientSecret:     req.Auth.OIDC.ClientSecret,
+					RedirectURL:      req.Auth.OIDC.RedirectURL,
+					Scopes:           req.Auth.OIDC.Scopes,
+					UsernameClaim:    req.Auth.OIDC.UsernameClaim,
+					EmailClaim:       req.Auth.OIDC.EmailClaim,
+					DisplayNameClaim: req.Auth.OIDC.DisplayNameClaim,
+					GroupsClaim:      req.Auth.OIDC.GroupsClaim,
+					DefaultRoles:     req.Auth.OIDC.DefaultRoles,
+					RoleMappings:     make([]config.OIDCRoleMapping, 0, len(req.Auth.OIDC.RoleMappings)),
+				}
+				for _, mapping := range req.Auth.OIDC.RoleMappings {
+					if strings.TrimSpace(mapping.External) == "" {
+						continue
+					}
+					cfg.Auth.OIDC.RoleMappings = append(cfg.Auth.OIDC.RoleMappings, config.OIDCRoleMapping{
+						External: mapping.External,
+						Roles:    mapping.Roles,
+					})
+				}
+			} else {
+				cfg.Auth.OIDC = nil
+			}
+		}
 		if req.Auth.Local != nil {
 			cfg.Auth.BuiltinUsers = make([]config.UserConfig, len(req.Auth.Local.Users))
 			cfg.Auth.Roles = make([]config.RoleConfig, len(req.Auth.Local.Roles))
@@ -731,6 +788,27 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 			local.Roles[i] = configUIRole{Name: r.Name, Users: users}
 		}
 		resp.Auth.Local = local
+	}
+	if cfg.Auth.OIDC != nil {
+		resp.Auth.OIDC = &configUIOIDC{
+			IssuerURL:        cfg.Auth.OIDC.IssuerURL,
+			ClientID:         cfg.Auth.OIDC.ClientID,
+			ClientSecret:     cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:      cfg.Auth.OIDC.RedirectURL,
+			Scopes:           cfg.Auth.OIDC.Scopes,
+			UsernameClaim:    cfg.Auth.OIDC.UsernameClaim,
+			EmailClaim:       cfg.Auth.OIDC.EmailClaim,
+			DisplayNameClaim: cfg.Auth.OIDC.DisplayNameClaim,
+			GroupsClaim:      cfg.Auth.OIDC.GroupsClaim,
+			DefaultRoles:     cfg.Auth.OIDC.DefaultRoles,
+			RoleMappings:     make([]configUIOIDCRoleMapping, 0, len(cfg.Auth.OIDC.RoleMappings)),
+		}
+		for _, mapping := range cfg.Auth.OIDC.RoleMappings {
+			resp.Auth.OIDC.RoleMappings = append(resp.Auth.OIDC.RoleMappings, configUIOIDCRoleMapping{
+				External: mapping.External,
+				Roles:    mapping.Roles,
+			})
+		}
 	}
 
 	// 始终返回所有钉钉实例（包括 enabled=false 的，凭据应保留显示）

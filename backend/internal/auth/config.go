@@ -46,7 +46,31 @@ func LoadAuthConfig() (*Config, error) {
 	unifiedConfig, actualPath, err := config.LoadConfig(configPath)
 	if err != nil {
 		// 极端情况：文件刚被创建但尚未写入（或权限问题），使用内置默认值
-		log.Printf("⚠️  无法读取配置文件 (%v)，使用内置默认认证配置（登录关闭）", err)
+		log.Printf("警告: 无法读取配置文件 (%v)，使用内置默认认证配置（登录关闭）", err)
+		return &Config{
+			Modes:        []AuthMode{},
+			JWTSecretKey: "default-secret-key-change-in-production",
+			JWTExpiresIn: 24 * time.Hour,
+		}, nil
+	}
+
+	authConfig, err := LoadAuthConfigFromConfig(unifiedConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("使用统一配置文件: %s", actualPath)
+	if len(authConfig.Modes) == 0 {
+		log.Printf("警告: auth.methods 为空，登录功能已关闭，请通过配置 UI 设置")
+	} else {
+		log.Printf("认证链: %v", authConfig.Modes)
+	}
+	return authConfig, nil
+}
+
+// LoadAuthConfigFromConfig 从已加载的统一配置构建认证配置。
+func LoadAuthConfigFromConfig(unifiedConfig *config.Config) (*Config, error) {
+	if unifiedConfig == nil {
 		return &Config{
 			Modes:        []AuthMode{},
 			JWTSecretKey: "default-secret-key-change-in-production",
@@ -56,7 +80,6 @@ func LoadAuthConfig() (*Config, error) {
 
 	authConfigData := unifiedConfig.GetAuthConfig()
 
-	// 解析鉴权链
 	modes := make([]AuthMode, 0, len(authConfigData.Methods))
 	for _, m := range authConfigData.Methods {
 		mode, err := parseAuthMode(m)
@@ -66,7 +89,6 @@ func LoadAuthConfig() (*Config, error) {
 		modes = append(modes, mode)
 	}
 
-	// JWT 配置
 	jwtSecretKey := authConfigData.JWT.SecretKey
 	if jwtSecretKey == "" {
 		jwtSecretKey = os.Getenv("JWT_SECRET_KEY")
@@ -95,13 +117,6 @@ func LoadAuthConfig() (*Config, error) {
 		YAMLConfigPath: "",
 	}
 	authConfig.YAMLConfig = convertYAMLConfig(unifiedConfig.GetYAMLConfig())
-
-	log.Printf("📄 使用统一配置文件: %s", actualPath)
-	if len(modes) == 0 {
-		log.Printf("⚠️  auth.methods 为空，登录功能已关闭，请通过配置 UI 设置")
-	} else {
-		log.Printf("✅ 认证链: %v", modes)
-	}
 	return authConfig, nil
 }
 
@@ -155,12 +170,23 @@ func convertYAMLConfig(cfg *config.YAMLConfigForAuth) *YAMLConfig {
 
 	if cfg.OIDC != nil {
 		result.OIDC = &OIDCConfig{
-			IssuerURL:     cfg.OIDC.IssuerURL,
-			ClientID:      cfg.OIDC.ClientID,
-			ClientSecret:  cfg.OIDC.ClientSecret,
-			RedirectURL:   cfg.OIDC.RedirectURL,
-			Scopes:        cfg.OIDC.Scopes,
-			UsernameClaim: cfg.OIDC.UsernameClaim,
+			IssuerURL:        cfg.OIDC.IssuerURL,
+			ClientID:         cfg.OIDC.ClientID,
+			ClientSecret:     cfg.OIDC.ClientSecret,
+			RedirectURL:      cfg.OIDC.RedirectURL,
+			Scopes:           cfg.OIDC.Scopes,
+			UsernameClaim:    cfg.OIDC.UsernameClaim,
+			EmailClaim:       cfg.OIDC.EmailClaim,
+			DisplayNameClaim: cfg.OIDC.DisplayNameClaim,
+			GroupsClaim:      cfg.OIDC.GroupsClaim,
+			DefaultRoles:     cfg.OIDC.DefaultRoles,
+			RoleMappings:     make([]OIDCRoleMapping, len(cfg.OIDC.RoleMappings)),
+		}
+		for i, mapping := range cfg.OIDC.RoleMappings {
+			result.OIDC.RoleMappings[i] = OIDCRoleMapping{
+				External: mapping.External,
+				Roles:    mapping.Roles,
+			}
 		}
 	}
 

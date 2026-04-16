@@ -543,6 +543,12 @@ type RoleConfig struct {
 	Users []string `yaml:"user"`
 }
 
+// OIDCRoleMapping OIDC 外部组/角色到本地角色的映射规则
+type OIDCRoleMapping struct {
+	External string   `yaml:"external"`
+	Roles    []string `yaml:"roles,omitempty"`
+}
+
 // LDAPConfig LDAP 认证配置
 type LDAPConfig struct {
 	Host         string `yaml:"host"`         // LDAP 服务器地址，如 ldap.example.com
@@ -560,12 +566,17 @@ type LDAPConfig struct {
 // OIDCConfig OIDC / OAuth2 认证配置
 // 兼容标准 OIDC Provider（Keycloak、Dex、Okta、Azure AD 等）
 type OIDCConfig struct {
-	IssuerURL     string   `yaml:"issuerURL"`               // Provider 地址，如 https://accounts.example.com
-	ClientID      string   `yaml:"clientId"`                // OAuth2 Client ID
-	ClientSecret  string   `yaml:"clientSecret"`            // OAuth2 Client Secret
-	RedirectURL   string   `yaml:"redirectURL"`             // 回调地址，如 http://your-server/api/auth/oidc/callback
-	Scopes        []string `yaml:"scopes,omitempty"`        // 默认: [openid, profile, email]
-	UsernameClaim string   `yaml:"usernameClaim,omitempty"` // 用于提取用户名的 claim，默认 preferred_username
+	IssuerURL        string            `yaml:"issuerURL"`                  // Provider 地址，如 https://accounts.example.com
+	ClientID         string            `yaml:"clientId"`                   // OAuth2 Client ID
+	ClientSecret     string            `yaml:"clientSecret"`               // OAuth2 Client Secret
+	RedirectURL      string            `yaml:"redirectURL,omitempty"`      // 回调地址，如 http://your-server/api/auth/oidc/callback；为空时按当前请求动态推导
+	Scopes           []string          `yaml:"scopes,omitempty"`           // 默认: [openid, profile, email]
+	UsernameClaim    string            `yaml:"usernameClaim,omitempty"`    // 用于提取用户名的 claim，默认 preferred_username
+	EmailClaim       string            `yaml:"emailClaim,omitempty"`       // 邮箱 claim，默认 email
+	DisplayNameClaim string            `yaml:"displayNameClaim,omitempty"` // 显示名 claim，默认 name
+	GroupsClaim      string            `yaml:"groupsClaim,omitempty"`      // 外部组/角色 claim，默认 groups
+	DefaultRoles     []string          `yaml:"defaultRoles,omitempty"`     // 未命中映射时的默认角色
+	RoleMappings     []OIDCRoleMapping `yaml:"roleMappings,omitempty"`     // 外部组/角色到本地角色映射
 }
 
 // randomHex 生成 n 字节的随机十六进制字符串

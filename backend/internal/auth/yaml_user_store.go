@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
@@ -199,8 +197,7 @@ func (s *YAMLUserStore) ValidatePassword(username, password string) (bool, error
 	if s.config.Local != nil {
 		salt = s.config.Local.PasswordSalt
 	}
-	hash := md5.Sum([]byte(salt + password))
-	inputHash := strings.ToLower(hex.EncodeToString(hash[:]))
+	inputHash := strings.ToLower(HashPassword(salt, password))
 	storedHash := strings.ToLower(user.PasswordHash)
 
 	return inputHash == storedHash, nil

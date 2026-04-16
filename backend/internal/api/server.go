@@ -42,6 +42,10 @@ type Server struct {
 	jwtManager     *auth.JWTManager
 	userStore      auth.UserStore
 	authMiddleware *auth.AuthMiddleware
+	oidcHTTPClient *http.Client
+
+	oidcStateMu sync.Mutex
+	oidcStates  map[string]oidcAuthState
 
 	// 钉钉机器人生命周期管理（支持多实例热启停，keyed by clientId）
 	dingtalkMu   sync.Mutex
@@ -108,6 +112,7 @@ func NewServer(cfg *client.Config, globalConfig *config.Config, configPath strin
 		configPath:    configPath,
 		configUIToken: token,
 		router:        router,
+		oidcStates:    make(map[string]oidcAuthState),
 	}
 
 	// 初始化认证系统
@@ -150,14 +155,25 @@ func NewServer(cfg *client.Config, globalConfig *config.Config, configPath strin
 	return server, nil
 }
 
+func (s *Server) loadAuthConfig() (*auth.Config, error) {
+	s.mu.RLock()
+	globalCfg := s.globalConfig
+	s.mu.RUnlock()
+	if globalCfg != nil {
+		return auth.LoadAuthConfigFromConfig(globalCfg)
+	}
+	return auth.LoadAuthConfig()
+}
+
 // initAuth 初始化认证系统
 func (s *Server) initAuth() error {
-	authConfig, err := auth.LoadAuthConfig()
+	authConfig, err := s.loadAuthConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load auth config: %w", err)
 	}
 
 	s.authModes = authConfig.Modes
+	s.userStore = nil
 
 	// 始终创建 JWT 管理器（即使 methods 为空，token 验证中间件仍然生效）
 	s.jwtManager = auth.NewJWTManager(authConfig.JWTSecretKey, authConfig.JWTExpiresIn)
@@ -200,12 +216,14 @@ func (s *Server) initAuth() error {
 			providers = append(providers, auth.NewLocalAuthProvider(userStore, s.jwtManager))
 
 		case auth.AuthModeLDAP:
-			// TODO: 实现 LDAP 认证提供者
-			return auth.ErrUnsupportedAuthMode
+			log.Printf("警告: LDAP 认证尚未实现，已跳过该鉴权节点")
 
 		case auth.AuthModeOIDC:
-			// TODO: 实现 OIDC 认证提供者
-			return auth.ErrUnsupportedAuthMode
+			if authConfig.YAMLConfig == nil || authConfig.YAMLConfig.OIDC == nil {
+				log.Printf("警告: OIDC 认证已启用，但 auth.oidc 尚未配置完整")
+				continue
+			}
+			log.Printf("OIDC / IDaaS 登录入口已启用")
 
 		default:
 			return auth.ErrUnsupportedAuthMode
@@ -232,6 +250,8 @@ func (s *Server) setupRoutes() {
 		// 认证相关接口（无需认证）
 		api.POST("/auth/login", s.handleLogin)
 		api.POST("/auth/logout", s.handleLogout)
+		api.GET("/auth/oidc/login", s.handleOIDCLogin)
+		api.GET("/auth/oidc/callback", s.handleOIDCCallback)
 
 		// 分享相关接口（无需认证，公开访问）
 		api.GET("/share/:employeeName/:threadId", s.handleGetSharedThread)
@@ -294,6 +314,8 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/admin-ui", s.handleConfigUIPage)
 	s.router.GET("/admin-ui/api/config", s.configUITokenMiddleware(), s.handleGetConfig)
 	s.router.POST("/admin-ui/api/config", s.configUITokenMiddleware(), s.handleSaveConfig)
+	s.router.GET("/admin-ui/api/auth/builtin-users/template", s.configUITokenMiddleware(), s.handleDownloadBuiltinUsersTemplate)
+	s.router.POST("/admin-ui/api/auth/builtin-users/import", s.configUITokenMiddleware(), s.handleImportBuiltinUsers)
 	s.router.POST("/admin-ui/api/test-ak", s.configUITokenMiddleware(), s.handleTestAK)
 	s.router.POST("/admin-ui/api/test-cms", s.configUITokenMiddleware(), s.handleTestCMS)
 	s.router.POST("/admin-ui/api/trigger-task", s.configUITokenMiddleware(), s.handleTriggerTask)
@@ -925,6 +947,10 @@ func (s *Server) reloadConfig() error {
 		Endpoint:        newClientConfig.Endpoint,
 	}
 	s.mu.Unlock()
+
+	if err := s.initAuth(); err != nil {
+		return fmt.Errorf("重新初始化认证配置失败: %w", err)
+	}
 
 	log.Printf("配置热重载完成")
 	return nil

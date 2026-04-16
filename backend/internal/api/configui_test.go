@@ -52,6 +52,21 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 			JWTSecretKey: "new-secret",
 			JWTExpiresIn: "48h",
 			PasswordSalt: "new-salt",
+			OIDC: &configUIOIDC{
+				IssuerURL:        "https://login.example.com",
+				ClientID:         "client-id",
+				ClientSecret:     "client-secret",
+				RedirectURL:      "https://app.example.com/api/auth/oidc/callback",
+				Scopes:           []string{"openid", "profile", "email", "groups"},
+				UsernameClaim:    "preferred_username",
+				EmailClaim:       "email",
+				DisplayNameClaim: "name",
+				GroupsClaim:      "groups",
+				DefaultRoles:     []string{"viewer"},
+				RoleMappings: []configUIOIDCRoleMapping{
+					{External: "ops", Roles: []string{"admin", "ops"}},
+				},
+			},
 			Local: &configUILocal{
 				Users: []configUIUser{{Name: "admin", Password: "new-hash"}},
 				Roles: []configUIRole{{Name: "admin", Users: []string{"admin"}}},
@@ -83,8 +98,11 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 	if cfg.Auth.LDAP == nil || cfg.Auth.LDAP.Host != "ldap.example.com" {
 		t.Fatalf("expected LDAP config to be preserved, got %+v", cfg.Auth.LDAP)
 	}
-	if cfg.Auth.OIDC == nil || cfg.Auth.OIDC.IssuerURL != "https://issuer.example.com" {
-		t.Fatalf("expected OIDC config to be preserved, got %+v", cfg.Auth.OIDC)
+	if cfg.Auth.OIDC == nil || cfg.Auth.OIDC.IssuerURL != "https://login.example.com" || cfg.Auth.OIDC.ClientID != "client-id" {
+		t.Fatalf("expected OIDC config to be updated, got %+v", cfg.Auth.OIDC)
+	}
+	if len(cfg.Auth.OIDC.RoleMappings) != 1 || cfg.Auth.OIDC.RoleMappings[0].External != "ops" {
+		t.Fatalf("expected OIDC role mappings to be updated, got %+v", cfg.Auth.OIDC.RoleMappings)
 	}
 	if len(cfg.Auth.BuiltinUsers) != 1 || cfg.Auth.BuiltinUsers[0].Name != "admin" {
 		t.Fatalf("expected builtin users to be updated, got %+v", cfg.Auth.BuiltinUsers)

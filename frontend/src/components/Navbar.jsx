@@ -30,14 +30,17 @@ function Navbar() {
   const avatarLetter = username.charAt(0).toUpperCase();
 
   return (
-    <div className="user-info">
-      <div className="user-avatar">
-        {avatarLetter}
+    <div className="navbar-card">
+      <div className="navbar-profile">
+        <div className="navbar-avatar">
+          {avatarLetter}
+        </div>
+        <div className="navbar-details">
+          <span className="navbar-label">当前账户</span>
+          <span className="navbar-name">{username}</span>
+        </div>
       </div>
-      <div className="user-details">
-        <span className="user-name">{username}</span>
-      </div>
-      <button className="logout-btn" onClick={handleLogout}>
+      <button className="navbar-logout-btn" onClick={handleLogout}>
         {t('nav.logout')}
       </button>
     </div>

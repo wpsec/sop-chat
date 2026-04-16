@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"sop-chat/internal/auth"
 	"sop-chat/pkg/sopchat"
 
 	"github.com/gin-gonic/gin"
@@ -65,9 +66,11 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 	s.mu.RLock()
 	cfg := s.config
 	globalCfg := s.globalConfig
-	authConfigured := len(s.authModes) > 0
+	authModes := append([]auth.AuthMode(nil), s.authModes...)
 	userStore := s.userStore
 	s.mu.RUnlock()
+
+	authConfigured := len(authModes) > 0
 
 	credConfigured := false
 	if globalCfg != nil {
@@ -87,10 +90,36 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 		}
 	}
 
+	builtinEnabled := false
+	oidcEnabled := false
+	for _, mode := range authModes {
+		switch mode {
+		case auth.AuthModeBuiltin:
+			builtinEnabled = true
+		case auth.AuthModeOIDC:
+			oidcEnabled = true
+		}
+	}
+
+	oidcConfigured := false
+	if globalCfg != nil {
+		oidcConfigured = isOIDCConfigUsable(globalCfg.Auth.OIDC)
+	}
+
+	builtinAvailable := builtinEnabled && usersConfigured
+	oidcAvailable := oidcEnabled && oidcConfigured
+	loginAvailable := builtinAvailable || oidcAvailable
+
 	c.JSON(http.StatusOK, gin.H{
-		"configured":      credConfigured && authConfigured && usersConfigured,
-		"credConfigured":  credConfigured,
-		"authConfigured":  authConfigured,
-		"usersConfigured": usersConfigured,
+		"configured":       credConfigured && authConfigured && loginAvailable,
+		"credConfigured":   credConfigured,
+		"authConfigured":   authConfigured,
+		"usersConfigured":  usersConfigured,
+		"methods":          authModesToStrings(authModes),
+		"builtinEnabled":   builtinEnabled,
+		"builtinAvailable": builtinAvailable,
+		"oidcEnabled":      oidcEnabled,
+		"oidcConfigured":   oidcConfigured,
+		"oidcAvailable":    oidcAvailable,
 	})
 }
