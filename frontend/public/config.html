@@ -438,6 +438,11 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
         <span class="hint">常见格式：<code>https://app.example.com/api/auth/oidc/callback</code></span>
       </div>
       <div class="field">
+        <label>退出地址 Logout URL</label>
+        <input type="text" id="a-oidc-logout" placeholder="discovery 未提供时可手动填写">
+        <span class="hint">可选；用于 OIDC / IDaaS 全局退出，常见格式：<code>https://id.example.com/oauth2/logout</code>。若 Provider 校验退出回跳地址，请放行 <code>/api/auth/oidc/logout/callback</code>。</span>
+      </div>
+      <div class="field">
         <label>Scopes</label>
         <input type="text" id="a-oidc-scopes" placeholder="openid, profile, email, groups">
         <span class="hint">逗号分隔；为空时默认使用 <code>openid, profile, email</code></span>
@@ -1388,6 +1393,7 @@ function populateOIDC(oidc) {
   setVal('a-oidc-client-id', cfg.clientId || '');
   setVal('a-oidc-client-secret', cfg.clientSecret || '');
   setVal('a-oidc-redirect', cfg.redirectURL || '');
+  setVal('a-oidc-logout', cfg.logoutURL || '');
   setVal('a-oidc-scopes', joinCsv(cfg.scopes || []));
   setVal('a-oidc-default-roles', joinCsv(cfg.defaultRoles || []));
   setVal('a-oidc-username-claim', cfg.usernameClaim || '');
@@ -1403,6 +1409,7 @@ function collectOIDC() {
     clientId: val('a-oidc-client-id'),
     clientSecret: val('a-oidc-client-secret'),
     redirectURL: val('a-oidc-redirect'),
+    logoutURL: val('a-oidc-logout'),
     scopes: splitCsv(val('a-oidc-scopes')),
     usernameClaim: val('a-oidc-username-claim'),
     emailClaim: val('a-oidc-email-claim'),

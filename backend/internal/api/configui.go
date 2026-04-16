@@ -158,6 +158,7 @@ type configUIOIDC struct {
 	ClientID         string                    `json:"clientId"`
 	ClientSecret     string                    `json:"clientSecret"`
 	RedirectURL      string                    `json:"redirectURL,omitempty"`
+	LogoutURL        string                    `json:"logoutURL,omitempty"`
 	Scopes           []string                  `json:"scopes,omitempty"`
 	UsernameClaim    string                    `json:"usernameClaim,omitempty"`
 	EmailClaim       string                    `json:"emailClaim,omitempty"`
@@ -404,6 +405,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 				strings.TrimSpace(req.Auth.OIDC.ClientID) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.ClientSecret) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.RedirectURL) != "" ||
+				strings.TrimSpace(req.Auth.OIDC.LogoutURL) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.UsernameClaim) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.EmailClaim) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.DisplayNameClaim) != "" ||
@@ -417,6 +419,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 					ClientID:         req.Auth.OIDC.ClientID,
 					ClientSecret:     req.Auth.OIDC.ClientSecret,
 					RedirectURL:      req.Auth.OIDC.RedirectURL,
+					LogoutURL:        req.Auth.OIDC.LogoutURL,
 					Scopes:           req.Auth.OIDC.Scopes,
 					UsernameClaim:    req.Auth.OIDC.UsernameClaim,
 					EmailClaim:       req.Auth.OIDC.EmailClaim,
@@ -795,6 +798,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 			ClientID:         cfg.Auth.OIDC.ClientID,
 			ClientSecret:     cfg.Auth.OIDC.ClientSecret,
 			RedirectURL:      cfg.Auth.OIDC.RedirectURL,
+			LogoutURL:        cfg.Auth.OIDC.LogoutURL,
 			Scopes:           cfg.Auth.OIDC.Scopes,
 			UsernameClaim:    cfg.Auth.OIDC.UsernameClaim,
 			EmailClaim:       cfg.Auth.OIDC.EmailClaim,

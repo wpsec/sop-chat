@@ -174,6 +174,7 @@ func convertYAMLConfig(cfg *config.YAMLConfigForAuth) *YAMLConfig {
 			ClientID:         cfg.OIDC.ClientID,
 			ClientSecret:     cfg.OIDC.ClientSecret,
 			RedirectURL:      cfg.OIDC.RedirectURL,
+			LogoutURL:        cfg.OIDC.LogoutURL,
 			Scopes:           cfg.OIDC.Scopes,
 			UsernameClaim:    cfg.OIDC.UsernameClaim,
 			EmailClaim:       cfg.OIDC.EmailClaim,

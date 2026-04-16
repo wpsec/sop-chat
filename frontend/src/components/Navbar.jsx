@@ -2,6 +2,7 @@
  * Navbar Component
  * Displays user info and logout button in top right corner
  */
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -11,10 +12,22 @@ function Navbar() {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
-    await logout();
-    navigate('/login');
+    if (loggingOut) {
+      return;
+    }
+
+    setLoggingOut(true);
+    try {
+      const result = await logout();
+      if (!result?.redirected) {
+        navigate('/login');
+      }
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   if (!user) return null;
@@ -40,8 +53,8 @@ function Navbar() {
           <span className="navbar-name">{username}</span>
         </div>
       </div>
-      <button className="navbar-logout-btn" onClick={handleLogout}>
-        {t('nav.logout')}
+      <button className="navbar-logout-btn" onClick={handleLogout} disabled={loggingOut}>
+        {loggingOut ? '退出中...' : t('nav.logout')}
       </button>
     </div>
   );

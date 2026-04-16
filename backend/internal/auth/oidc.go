@@ -135,6 +135,27 @@ func BuildOIDCAuthorizeURL(cfg *config.OIDCConfig, metadata *OIDCProviderMetadat
 	return authURL.String(), nil
 }
 
+// BuildOIDCLogoutURL 构造 Provider 退出地址。
+func BuildOIDCLogoutURL(endSessionEndpoint, postLogoutRedirectURL, clientID string) (string, error) {
+	if strings.TrimSpace(endSessionEndpoint) == "" {
+		return "", fmt.Errorf("oidc 退出端点未配置")
+	}
+	logoutURL, err := url.Parse(strings.TrimSpace(endSessionEndpoint))
+	if err != nil {
+		return "", fmt.Errorf("无效的 logout endpoint: %w", err)
+	}
+
+	query := logoutURL.Query()
+	if strings.TrimSpace(postLogoutRedirectURL) != "" {
+		query.Set("post_logout_redirect_uri", strings.TrimSpace(postLogoutRedirectURL))
+	}
+	if strings.TrimSpace(clientID) != "" {
+		query.Set("client_id", strings.TrimSpace(clientID))
+	}
+	logoutURL.RawQuery = query.Encode()
+	return logoutURL.String(), nil
+}
+
 // ExchangeOIDCCode 使用授权码换取 id_token。
 func ExchangeOIDCCode(ctx context.Context, client *http.Client, cfg *config.OIDCConfig, metadata *OIDCProviderMetadata, code, redirectURL string) (*oidcTokenResponse, error) {
 	form := url.Values{}

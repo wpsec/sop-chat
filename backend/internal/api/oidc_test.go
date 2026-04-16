@@ -99,11 +99,95 @@ func TestHandleOIDCCallbackWritesSessionBootstrapPage(t *testing.T) {
 	if !strings.Contains(body, "localStorage.setItem('auth_token'") || !strings.Contains(body, "localStorage.setItem('auth_user'") {
 		t.Fatalf("expected session bootstrap page, got %s", body)
 	}
+	if !strings.Contains(body, "localStorage.setItem('auth_mode'") {
+		t.Fatalf("expected auth_mode to be persisted for oidc session, got %s", body)
+	}
 	if !strings.Contains(body, "/#/") {
 		t.Fatalf("expected redirect to hash router root, got %s", body)
 	}
 	if _, stillExists := server.oidcStates[state]; stillExists {
 		t.Fatalf("expected state to be consumed after callback")
+	}
+}
+
+func TestHandleOIDCLogoutRedirectsToProviderEndSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := newAPIOIDCTestProvider(t)
+	server := newOIDCAPITestServer(t, provider)
+	router := gin.New()
+	router.GET("/api/auth/oidc/logout", server.handleOIDCLogout)
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/auth/oidc/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("failed to parse logout redirect: %v", err)
+	}
+	if location.Scheme+"://"+location.Host+location.Path != provider.logoutURL {
+		t.Fatalf("unexpected logout redirect: %s", location.String())
+	}
+	if location.Query().Get("client_id") != "client-id" {
+		t.Fatalf("expected client_id in logout redirect, got %s", location.RawQuery)
+	}
+	if location.Query().Get("post_logout_redirect_uri") != "http://app.example.com/api/auth/oidc/logout/callback" {
+		t.Fatalf("unexpected post_logout_redirect_uri: %s", location.RawQuery)
+	}
+}
+
+func TestHandleOIDCLogoutFallsBackToConfiguredLogoutURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := newAPIOIDCTestProvider(t)
+	provider.includeEndSessionEndpoint = false
+	server := newOIDCAPITestServer(t, provider)
+	server.globalConfig.Auth.OIDC.LogoutURL = "https://override.example.com/logout"
+	router := gin.New()
+	router.GET("/api/auth/oidc/logout", server.handleOIDCLogout)
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/auth/oidc/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("failed to parse logout redirect: %v", err)
+	}
+	if location.Scheme+"://"+location.Host+location.Path != "https://override.example.com/logout" {
+		t.Fatalf("unexpected configured logout redirect: %s", location.String())
+	}
+}
+
+func TestHandleOIDCLogoutFallsBackToLoginNoticeWithoutProviderEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := newAPIOIDCTestProvider(t)
+	provider.includeEndSessionEndpoint = false
+	server := newOIDCAPITestServer(t, provider)
+	server.globalConfig.Auth.OIDC.LogoutURL = ""
+	router := gin.New()
+	router.GET("/api/auth/oidc/logout", server.handleOIDCLogout)
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/auth/oidc/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	if !strings.HasPrefix(location, "http://app.example.com/#/login?message=") {
+		t.Fatalf("expected login notice redirect, got %s", location)
 	}
 }
 
@@ -122,6 +206,7 @@ func newOIDCAPITestServer(t *testing.T, provider *apiOIDCTestProvider) *Server {
 					IssuerURL:        provider.issuerURL,
 					ClientID:         "client-id",
 					ClientSecret:     "client-secret",
+					LogoutURL:        provider.logoutURL,
 					UsernameClaim:    "preferred_username",
 					EmailClaim:       "email",
 					DisplayNameClaim: "name",
@@ -143,9 +228,11 @@ func newOIDCAPITestServer(t *testing.T, provider *apiOIDCTestProvider) *Server {
 }
 
 type apiOIDCTestProvider struct {
-	issuerURL     string
-	key           *rsa.PrivateKey
-	expectedNonce string
+	issuerURL                 string
+	logoutURL                 string
+	key                       *rsa.PrivateKey
+	expectedNonce             string
+	includeEndSessionEndpoint bool
 }
 
 type apiOIDCTestRoundTripper struct {
@@ -161,8 +248,10 @@ func newAPIOIDCTestProvider(t *testing.T) *apiOIDCTestProvider {
 	}
 
 	return &apiOIDCTestProvider{
-		issuerURL: "https://login.example.com",
-		key:       key,
+		issuerURL:                 "https://login.example.com",
+		logoutURL:                 "https://login.example.com/logout",
+		key:                       key,
+		includeEndSessionEndpoint: true,
 	}
 }
 
@@ -176,12 +265,16 @@ func (rt *apiOIDCTestRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	provider := rt.provider
 	switch req.URL.Path {
 	case "/.well-known/openid-configuration":
-		return newJSONHTTPResponse(http.StatusOK, map[string]any{
+		payload := map[string]any{
 			"issuer":                 provider.issuerURL,
 			"authorization_endpoint": provider.issuerURL + "/authorize",
 			"token_endpoint":         provider.issuerURL + "/token",
 			"jwks_uri":               provider.issuerURL + "/jwks",
-		}), nil
+		}
+		if provider.includeEndSessionEndpoint {
+			payload["end_session_endpoint"] = provider.logoutURL
+		}
+		return newJSONHTTPResponse(http.StatusOK, payload), nil
 	case "/jwks":
 		return newJSONHTTPResponse(http.StatusOK, map[string]any{
 			"keys": []map[string]any{

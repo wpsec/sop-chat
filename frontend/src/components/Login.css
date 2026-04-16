@@ -75,6 +75,16 @@
   border: 1px solid #fcc;
 }
 
+.info-message {
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f4c5c;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  line-height: 1.6;
+}
+
 .login-button {
   padding: 14px;
   background: linear-gradient(135deg, #1d4ed8 0%, #0f766e 100%);

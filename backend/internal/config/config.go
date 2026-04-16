@@ -570,6 +570,7 @@ type OIDCConfig struct {
 	ClientID         string            `yaml:"clientId"`                   // OAuth2 Client ID
 	ClientSecret     string            `yaml:"clientSecret"`               // OAuth2 Client Secret
 	RedirectURL      string            `yaml:"redirectURL,omitempty"`      // 回调地址，如 http://your-server/api/auth/oidc/callback；为空时按当前请求动态推导
+	LogoutURL        string            `yaml:"logoutURL,omitempty"`        // 可选：退出端点；discovery 未返回 end_session_endpoint 时可显式指定
 	Scopes           []string          `yaml:"scopes,omitempty"`           // 默认: [openid, profile, email]
 	UsernameClaim    string            `yaml:"usernameClaim,omitempty"`    // 用于提取用户名的 claim，默认 preferred_username
 	EmailClaim       string            `yaml:"emailClaim,omitempty"`       // 邮箱 claim，默认 email

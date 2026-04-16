@@ -164,6 +164,10 @@ func (s *Server) effectiveOIDCRedirectURL(c *gin.Context, cfg *config.OIDCConfig
 	return requestBaseURL(c.Request) + "/api/auth/oidc/callback"
 }
 
+func (s *Server) effectiveOIDCLogoutCallbackURL(c *gin.Context) string {
+	return requestBaseURL(c.Request) + "/api/auth/oidc/logout/callback"
+}
+
 func frontendHashURL(c *gin.Context, hashPath string, query url.Values) string {
 	fragment := "/"
 	if strings.TrimSpace(hashPath) != "" {
@@ -183,6 +187,23 @@ func (s *Server) redirectOIDCError(c *gin.Context, message string) {
 	query.Set("error", message)
 	c.Header("Cache-Control", "no-store")
 	c.Redirect(http.StatusFound, frontendHashURL(c, "/login", query))
+}
+
+func (s *Server) redirectOIDCMessage(c *gin.Context, message string) {
+	query := url.Values{}
+	query.Set("message", message)
+	c.Header("Cache-Control", "no-store")
+	c.Redirect(http.StatusFound, frontendHashURL(c, "/login", query))
+}
+
+func resolveOIDCEndSessionEndpoint(cfg *config.OIDCConfig, metadata *auth.OIDCProviderMetadata) string {
+	if metadata != nil && strings.TrimSpace(metadata.EndSessionEndpoint) != "" {
+		return strings.TrimSpace(metadata.EndSessionEndpoint)
+	}
+	if cfg != nil && strings.TrimSpace(cfg.LogoutURL) != "" {
+		return strings.TrimSpace(cfg.LogoutURL)
+	}
+	return ""
 }
 
 func (s *Server) handleOIDCLogin(c *gin.Context) {
@@ -296,9 +317,52 @@ func (s *Server) handleOIDCCallback(c *gin.Context) {
 	s.renderOIDCSuccess(c, token, identity.User)
 }
 
+func (s *Server) handleOIDCLogout(c *gin.Context) {
+	if !s.hasAuthMode(auth.AuthModeOIDC) {
+		s.redirectOIDCMessage(c, "已退出当前系统")
+		return
+	}
+
+	oidcCfg := s.currentOIDCConfig()
+	if !isOIDCConfigUsable(oidcCfg) {
+		s.redirectOIDCMessage(c, "已退出当前系统")
+		return
+	}
+
+	var metadata *auth.OIDCProviderMetadata
+	if discovered, err := auth.DiscoverOIDCProvider(c.Request.Context(), s.oidcClient(), oidcCfg.IssuerURL); err == nil {
+		metadata = discovered
+	}
+
+	endSessionEndpoint := resolveOIDCEndSessionEndpoint(oidcCfg, metadata)
+	if endSessionEndpoint == "" {
+		s.redirectOIDCMessage(c, "已退出当前系统，IDaaS 主登录态可能仍然保留")
+		return
+	}
+
+	logoutURL, err := auth.BuildOIDCLogoutURL(endSessionEndpoint, s.effectiveOIDCLogoutCallbackURL(c), oidcCfg.ClientID)
+	if err != nil {
+		if oidcCfg != nil && strings.TrimSpace(oidcCfg.LogoutURL) != "" && strings.TrimSpace(oidcCfg.LogoutURL) != endSessionEndpoint {
+			logoutURL, err = auth.BuildOIDCLogoutURL(oidcCfg.LogoutURL, s.effectiveOIDCLogoutCallbackURL(c), oidcCfg.ClientID)
+		}
+		if err != nil {
+			s.redirectOIDCMessage(c, "已退出当前系统，IDaaS 退出地址不可用")
+			return
+		}
+	}
+
+	c.Header("Cache-Control", "no-store")
+	c.Redirect(http.StatusFound, logoutURL)
+}
+
+func (s *Server) handleOIDCLogoutCallback(c *gin.Context) {
+	s.redirectOIDCMessage(c, "已退出当前系统，并完成 IDaaS 退出流程")
+}
+
 func (s *Server) renderOIDCSuccess(c *gin.Context, token string, user *auth.User) {
 	tokenJSON, _ := json.Marshal(token)
 	userJSON, _ := json.Marshal(user)
+	authModeJSON, _ := json.Marshal(string(auth.AuthModeOIDC))
 	redirectJSON, _ := json.Marshal(frontendHashURL(c, "/", nil))
 	fallbackJSON, _ := json.Marshal(frontendHashURL(c, "/login", url.Values{
 		"error": []string{"浏览器阻止了本地会话写入，请重试"},
@@ -325,18 +389,20 @@ func (s *Server) renderOIDCSuccess(c *gin.Context, token string, user *auth.User
   <script>
     const token = %s;
     const user = %s;
+    const authMode = %s;
     const successRedirect = %s;
     const errorRedirect = %s;
     try {
       localStorage.setItem('auth_token', token);
       localStorage.setItem('auth_user', JSON.stringify(user));
+      localStorage.setItem('auth_mode', authMode);
       window.location.replace(successRedirect);
     } catch (err) {
       window.location.replace(errorRedirect);
     }
   </script>
 </body>
-</html>`, tokenJSON, userJSON, redirectJSON, fallbackJSON)
+</html>`, tokenJSON, userJSON, authModeJSON, redirectJSON, fallbackJSON)
 
 	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(page))

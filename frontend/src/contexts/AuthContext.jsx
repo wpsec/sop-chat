@@ -65,10 +65,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    await logoutService();
+    const result = await logoutService();
     setToken(null);
     setUser(null);
     setIsAuthenticated(false);
+    return result;
   };
 
   const value = {

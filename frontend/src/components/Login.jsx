@@ -12,6 +12,7 @@ function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [setupStatus, setSetupStatus] = useState(null);
   const { login } = useAuth();
@@ -23,8 +24,12 @@ function Login() {
     if (queryIndex >= 0) {
       const params = new URLSearchParams(hash.slice(queryIndex + 1));
       const redirectError = params.get('error');
+      const redirectMessage = params.get('message');
       if (redirectError) {
         setError(redirectError);
+      }
+      if (redirectMessage) {
+        setMessage(redirectMessage);
       }
     }
 
@@ -37,6 +42,7 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     setLoading(true);
 
     try {
@@ -51,6 +57,7 @@ function Login() {
 
   const handleOIDCLogin = () => {
     setError('');
+    setMessage('');
     window.location.assign('/api/auth/oidc/login');
   };
 
@@ -95,6 +102,7 @@ function Login() {
       <div className="login-box">
         <h1 className="login-title">{t('login.title')}</h1>
         <div className="login-form">
+          {message && <div className="info-message">{message}</div>}
           {error && <div className="error-message">{error}</div>}
 
           {hasBuiltinLogin && (

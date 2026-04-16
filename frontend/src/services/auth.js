@@ -63,6 +63,7 @@ authClient.interceptors.request.use(
 // Token storage key
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+const AUTH_MODE_KEY = 'auth_mode';
 
 /**
  * Get stored token
@@ -109,11 +110,30 @@ export const setUser = (user) => {
 };
 
 /**
+ * Get stored authentication mode
+ */
+export const getAuthMode = () => {
+  return localStorage.getItem(AUTH_MODE_KEY);
+};
+
+/**
+ * Set authentication mode in storage
+ */
+export const setAuthMode = (mode) => {
+  if (mode) {
+    localStorage.setItem(AUTH_MODE_KEY, mode);
+  } else {
+    localStorage.removeItem(AUTH_MODE_KEY);
+  }
+};
+
+/**
  * Clear authentication data
  */
 export const clearAuth = () => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(AUTH_MODE_KEY);
 };
 
 /**
@@ -141,7 +161,8 @@ export const login = async (username, password) => {
     // Store token and user info
     setToken(token);
     setUser(user);
-    
+    setAuthMode('password');
+
     return { token, user };
   } catch (error) {
     const errorMessage = error.response?.data?.detail || error.response?.data?.error || '登录失败';
@@ -153,6 +174,17 @@ export const login = async (username, password) => {
  * Logout current user
  */
 export const logout = async () => {
+  const authMode = getAuthMode();
+
+  if (authMode === 'oidc') {
+    clearAuth();
+    const oidcLogoutURL = `${getApiBaseUrlDynamic()}/api/auth/oidc/logout`;
+    if (typeof window !== 'undefined') {
+      window.location.assign(oidcLogoutURL);
+    }
+    return { redirected: true };
+  }
+
   try {
     // Call logout endpoint if needed
     const token = getToken();
@@ -170,6 +202,8 @@ export const logout = async () => {
     // Always clear local storage
     clearAuth();
   }
+
+  return { redirected: false };
 };
 
 /**

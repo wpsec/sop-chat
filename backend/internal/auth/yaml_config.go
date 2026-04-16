@@ -61,6 +61,7 @@ type OIDCConfig struct {
 	ClientID         string            `yaml:"clientId"`
 	ClientSecret     string            `yaml:"clientSecret"`
 	RedirectURL      string            `yaml:"redirectURL,omitempty"`
+	LogoutURL        string            `yaml:"logoutURL,omitempty"`
 	Scopes           []string          `yaml:"scopes,omitempty"`
 	UsernameClaim    string            `yaml:"usernameClaim,omitempty"`
 	EmailClaim       string            `yaml:"emailClaim,omitempty"`

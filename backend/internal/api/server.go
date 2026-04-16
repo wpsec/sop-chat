@@ -252,6 +252,8 @@ func (s *Server) setupRoutes() {
 		api.POST("/auth/logout", s.handleLogout)
 		api.GET("/auth/oidc/login", s.handleOIDCLogin)
 		api.GET("/auth/oidc/callback", s.handleOIDCCallback)
+		api.GET("/auth/oidc/logout", s.handleOIDCLogout)
+		api.GET("/auth/oidc/logout/callback", s.handleOIDCLogoutCallback)
 
 		// 分享相关接口（无需认证，公开访问）
 		api.GET("/share/:employeeName/:threadId", s.handleGetSharedThread)

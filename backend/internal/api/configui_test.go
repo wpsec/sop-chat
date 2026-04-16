@@ -57,6 +57,7 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 				ClientID:         "client-id",
 				ClientSecret:     "client-secret",
 				RedirectURL:      "https://app.example.com/api/auth/oidc/callback",
+				LogoutURL:        "https://login.example.com/logout",
 				Scopes:           []string{"openid", "profile", "email", "groups"},
 				UsernameClaim:    "preferred_username",
 				EmailClaim:       "email",
@@ -100,6 +101,9 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 	}
 	if cfg.Auth.OIDC == nil || cfg.Auth.OIDC.IssuerURL != "https://login.example.com" || cfg.Auth.OIDC.ClientID != "client-id" {
 		t.Fatalf("expected OIDC config to be updated, got %+v", cfg.Auth.OIDC)
+	}
+	if cfg.Auth.OIDC.LogoutURL != "https://login.example.com/logout" {
+		t.Fatalf("expected OIDC logout URL to be updated, got %+v", cfg.Auth.OIDC)
 	}
 	if len(cfg.Auth.OIDC.RoleMappings) != 1 || cfg.Auth.OIDC.RoleMappings[0].External != "ops" {
 		t.Fatalf("expected OIDC role mappings to be updated, got %+v", cfg.Auth.OIDC.RoleMappings)
