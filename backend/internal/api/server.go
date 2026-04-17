@@ -188,11 +188,32 @@ func (s *Server) initAuth() error {
 
 	// 为鉴权链中每个模式创建对应的 Provider
 	providers := make([]auth.Provider, 0, len(s.authModes))
+	passwordSalt := ""
+	if authConfig.YAMLConfig != nil && authConfig.YAMLConfig.Local != nil {
+		passwordSalt = authConfig.YAMLConfig.Local.PasswordSalt
+	}
 	for _, mode := range s.authModes {
 		switch mode {
 		case auth.AuthModeBuiltin:
 			var userStore auth.UserStore
-			if authConfig.YAMLConfig != nil && authConfig.YAMLConfig.Local != nil {
+			if globalCfg := s.globalConfig; globalCfg != nil && globalCfg.BuiltinStorage() == "sqlite" {
+				sqlitePath := config.ResolveBuiltinSQLitePath(s.configPath, globalCfg.Auth.Builtin)
+				log.Printf("加载内置用户（SQLite: %s）", sqlitePath)
+				sqliteStore, err := auth.NewSQLiteUserStore(sqlitePath, passwordSalt)
+				if err != nil {
+					return fmt.Errorf("加载 SQLite 内置用户失败: %w", err)
+				}
+				if empty, err := sqliteStore.IsEmpty(); err == nil && empty &&
+					(len(globalCfg.Auth.BuiltinUsers) > 0 || len(globalCfg.Auth.Roles) > 0) {
+					if err := sqliteStore.BootstrapFromConfig(globalCfg.Auth.BuiltinUsers, globalCfg.Auth.Roles); err != nil {
+						return fmt.Errorf("从配置迁移 builtin 用户到 SQLite 失败: %w", err)
+					}
+					log.Printf("builtin 用户已从配置迁移到 SQLite")
+				}
+				userStore = sqliteStore
+				s.userStore = userStore
+				log.Printf("builtin 认证就绪（SQLite）")
+			} else if authConfig.YAMLConfig != nil && authConfig.YAMLConfig.Local != nil {
 				log.Printf("加载内置用户（统一配置）")
 				yamlStore, err := auth.NewYAMLUserStoreFromConfig(authConfig.YAMLConfig)
 				if err != nil {

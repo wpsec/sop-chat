@@ -315,6 +315,24 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
 <!-- ── Tab 2: Auth ── -->
 <div class="tab-panel" id="panel-auth">
   <div class="card">
+    <div class="card-title"><span class="card-title-icon" aria-hidden="true"></span> builtin 存储</div>
+    <div class="field-grid">
+      <div class="field">
+        <label>存储方式</label>
+        <select id="a-builtin-storage">
+          <option value="yaml">yaml（兼容旧模式）</option>
+          <option value="sqlite">sqlite（推荐）</option>
+        </select>
+        <span class="hint">切到 <code>sqlite</code> 后，内置用户、角色和 Excel 导入都写入本地数据库，不再长期保存在 <code>config.yaml</code>。</span>
+      </div>
+      <div class="field">
+        <label>SQLite 路径</label>
+        <input type="text" id="a-builtin-sqlite-path" placeholder="留空时默认使用 builtin-users.db">
+        <span class="hint">相对路径默认相对 <code>config.yaml</code> 所在目录，例如 <code>data/builtin-users.db</code>。</span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
     <div class="card-title">
       <span class="card-title-icon" aria-hidden="true"></span> 内置用户
       <div class="spacer"></div>
@@ -339,7 +357,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <input type="file" id="builtin-users-import-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleBuiltinUsersImportChange(event)">
     <div id="builtin-import-feedback" class="reload-note" style="display:none;margin-top:10px"></div>
     <p style="font-size:12px;color:var(--text3);margin-top:10px">密码在保存时自动按 <code>MD5(passwordSalt + 明文密码)</code> 计算哈希；已有用户密码留空即可保持不变。</p>
-    <p style="font-size:12px;color:var(--text3);margin-top:8px">导入模板固定使用 <code>users</code> sheet，列为 <code>username</code>、<code>initial_password</code>、<code>roles</code>。导入接口会在服务端按当前 <code>passwordSalt</code> 计算哈希，不回显明文密码。</p>
+    <p style="font-size:12px;color:var(--text3);margin-top:8px">导入模板固定使用 <code>users</code> sheet，列为 <code>username</code>、<code>initial_password</code>、<code>roles</code>。导入接口会在服务端按当前 <code>passwordSalt</code> 计算哈希，不回显明文密码；当存储方式为 <code>sqlite</code> 时会直接写入本地数据库。</p>
   </div>
   <div class="card">
     <div class="card-title">
@@ -1064,7 +1082,7 @@ function showStatus(type, msg, action) {
 
 // ── Auth methods list ─────────────────────────────────────────────────────
 const METHOD_LABELS = {
-  builtin: '内置账号（builtinUsers）',
+  builtin: '本地账号（builtin）',
   ldap:    'LDAP 认证（待实现）',
   oidc:    'OpenID Connect / IDaaS',
 };
@@ -1401,6 +1419,12 @@ function populateOIDC(oidc) {
   setVal('a-oidc-display-name-claim', cfg.displayNameClaim || '');
   setVal('a-oidc-groups-claim', cfg.groupsClaim || '');
   renderOIDCRoleMappings(cfg.roleMappings || []);
+}
+
+function populateBuiltin(builtin) {
+  const cfg = builtin || {};
+  setVal('a-builtin-storage', cfg.storage || 'yaml');
+  setVal('a-builtin-sqlite-path', cfg.sqlitePath || '');
 }
 
 function collectOIDC() {
@@ -2384,6 +2408,7 @@ function populate(data) {
   setVal('a-jwt-key', a.jwtSecretKey);
   setVal('a-jwt-exp', a.jwtExpiresIn || '24h');
   setVal('a-salt', a.passwordSalt || '');
+  populateBuiltin(a.builtin || {});
   renderUsers((a.local || {}).users);
   renderRoles((a.local || {}).roles);
   populateOIDC(a.oidc || {});
@@ -2426,6 +2451,10 @@ function collect() {
       jwtSecretKey: val('a-jwt-key'),
       jwtExpiresIn: val('a-jwt-exp') || '24h',
       passwordSalt: val('a-salt'),
+      builtin: {
+        storage:    val('a-builtin-storage') || 'yaml',
+        sqlitePath: val('a-builtin-sqlite-path'),
+      },
       oidc:         collectOIDC(),
       local: { users, roles },
     },

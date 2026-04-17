@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"sop-chat/internal/auth"
 	"sop-chat/internal/client"
 	"sop-chat/internal/config"
 	"sop-chat/internal/embed"
@@ -130,12 +131,18 @@ type configUICloudAccount struct {
 }
 
 type configUIAuth struct {
-	Methods      []string       `json:"methods"`                // 鉴权链，对应 auth.methods
-	JWTSecretKey string         `json:"jwtSecretKey"`           // maps to auth.jwt.secretKey
-	JWTExpiresIn string         `json:"jwtExpiresIn"`           // maps to auth.jwt.expiresIn
-	PasswordSalt string         `json:"passwordSalt,omitempty"` // MD5(salt+password)
-	Local        *configUILocal `json:"local,omitempty"`
-	OIDC         *configUIOIDC  `json:"oidc,omitempty"`
+	Methods      []string         `json:"methods"`                // 鉴权链，对应 auth.methods
+	JWTSecretKey string           `json:"jwtSecretKey"`           // maps to auth.jwt.secretKey
+	JWTExpiresIn string           `json:"jwtExpiresIn"`           // maps to auth.jwt.expiresIn
+	PasswordSalt string           `json:"passwordSalt,omitempty"` // MD5(salt+password)
+	Builtin      *configUIBuiltin `json:"builtin,omitempty"`
+	Local        *configUILocal   `json:"local,omitempty"`
+	OIDC         *configUIOIDC    `json:"oidc,omitempty"`
+}
+
+type configUIBuiltin struct {
+	Storage    string `json:"storage,omitempty"`
+	SQLitePath string `json:"sqlitePath,omitempty"`
 }
 
 type configUILocal struct {
@@ -338,6 +345,120 @@ func cloneConfigForSave(existing *config.Config) (*config.Config, error) {
 	return &cloned, nil
 }
 
+func loadBuiltinLocalForUI(cfg *config.Config, configPath string) (*configUILocal, error) {
+	if cfg == nil {
+		return &configUILocal{Users: []configUIUser{}, Roles: []configUIRole{}}, nil
+	}
+
+	if cfg.BuiltinStorage() != "sqlite" {
+		local := &configUILocal{
+			Users: make([]configUIUser, len(cfg.Auth.BuiltinUsers)),
+			Roles: make([]configUIRole, len(cfg.Auth.Roles)),
+		}
+		for i, u := range cfg.Auth.BuiltinUsers {
+			local.Users[i] = configUIUser{Name: u.Name, Password: u.Password}
+		}
+		for i, r := range cfg.Auth.Roles {
+			users := r.Users
+			if users == nil {
+				users = []string{}
+			}
+			local.Roles[i] = configUIRole{Name: r.Name, Users: users}
+		}
+		return local, nil
+	}
+
+	store, err := auth.NewSQLiteUserStore(config.ResolveBuiltinSQLitePath(configPath, cfg.Auth.Builtin), cfg.Auth.PasswordSalt)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+
+	users, err := store.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+	roles, err := store.ListRoles()
+	if err != nil {
+		return nil, err
+	}
+
+	local := &configUILocal{
+		Users: make([]configUIUser, 0, len(users)),
+		Roles: make([]configUIRole, 0, len(roles)),
+	}
+	for _, user := range users {
+		local.Users = append(local.Users, configUIUser{
+			Name:     user.Username,
+			Password: user.PasswordHash,
+		})
+	}
+	for _, role := range roles {
+		local.Roles = append(local.Roles, configUIRole{
+			Name:  role.Name,
+			Users: append([]string(nil), role.Users...),
+		})
+	}
+	return local, nil
+}
+
+func syncBuiltinSQLiteFromUILocal(cfg *config.Config, configPath string, local *configUILocal) error {
+	if cfg == nil || cfg.BuiltinStorage() != "sqlite" || local == nil {
+		return nil
+	}
+
+	store, err := auth.NewSQLiteUserStore(config.ResolveBuiltinSQLitePath(configPath, cfg.Auth.Builtin), cfg.Auth.PasswordSalt)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	users := make([]*auth.StoredUser, 0, len(local.Users))
+	storedRoles := make([]*auth.StoredRole, 0, len(local.Roles))
+	now := time.Now().Format(time.RFC3339)
+
+	for _, role := range local.Roles {
+		if strings.TrimSpace(role.Name) == "" {
+			continue
+		}
+		usersForRole := append([]string(nil), role.Users...)
+		storedRoles = append(storedRoles, &auth.StoredRole{
+			Name:      role.Name,
+			Users:     usersForRole,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+
+	for _, user := range local.Users {
+		if strings.TrimSpace(user.Name) == "" {
+			continue
+		}
+		roles := make([]string, 0)
+		for _, role := range local.Roles {
+			if strings.TrimSpace(role.Name) == "" {
+				continue
+			}
+			for _, username := range role.Users {
+				if strings.TrimSpace(username) == strings.TrimSpace(user.Name) {
+					roles = append(roles, role.Name)
+					break
+				}
+			}
+		}
+		users = append(users, &auth.StoredUser{
+			Username:     user.Name,
+			PasswordHash: user.Password,
+			Email:        fmt.Sprintf("%s@localhost", user.Name),
+			Roles:        roles,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	}
+
+	return store.ReplaceAll(users, storedRoles)
+}
+
 func buildConfigFromUI(existing *config.Config, req configUIResponse, presence configUIFieldPresence) (*config.Config, error) {
 	cfg, err := cloneConfigForSave(existing)
 	if err != nil {
@@ -400,6 +521,18 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 		}
 		cfg.Auth.PasswordSalt = req.Auth.PasswordSalt
 		cfg.Auth.LDAP = ldapCfg
+		if req.Auth.Builtin != nil {
+			hasBuiltinValue := strings.TrimSpace(req.Auth.Builtin.Storage) != "" ||
+				strings.TrimSpace(req.Auth.Builtin.SQLitePath) != ""
+			if hasBuiltinValue {
+				cfg.Auth.Builtin = &config.BuiltinAuthConfig{
+					Storage:    req.Auth.Builtin.Storage,
+					SQLitePath: req.Auth.Builtin.SQLitePath,
+				}
+			} else {
+				cfg.Auth.Builtin = nil
+			}
+		}
 		if req.Auth.OIDC != nil {
 			hasOIDCValue := strings.TrimSpace(req.Auth.OIDC.IssuerURL) != "" ||
 				strings.TrimSpace(req.Auth.OIDC.ClientID) != "" ||
@@ -441,7 +574,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 				cfg.Auth.OIDC = nil
 			}
 		}
-		if req.Auth.Local != nil {
+		if req.Auth.Local != nil && cfg.BuiltinStorage() == "yaml" {
 			cfg.Auth.BuiltinUsers = make([]config.UserConfig, len(req.Auth.Local.Users))
 			cfg.Auth.Roles = make([]config.RoleConfig, len(req.Auth.Local.Roles))
 			for i, u := range req.Auth.Local.Users {
@@ -450,6 +583,9 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 			for i, r := range req.Auth.Local.Roles {
 				cfg.Auth.Roles[i] = config.RoleConfig{Name: r.Name, Users: r.Users}
 			}
+		} else if cfg.BuiltinStorage() == "sqlite" {
+			cfg.Auth.BuiltinUsers = nil
+			cfg.Auth.Roles = nil
 		}
 	}
 
@@ -755,6 +891,15 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 			JWTSecretKey: cfg.Auth.JWT.SecretKey,
 			JWTExpiresIn: cfg.Auth.JWT.ExpiresIn,
 			PasswordSalt: cfg.Auth.PasswordSalt,
+			Builtin: &configUIBuiltin{
+				Storage: cfg.BuiltinStorage(),
+				SQLitePath: func() string {
+					if cfg.Auth.Builtin == nil {
+						return ""
+					}
+					return cfg.Auth.Builtin.SQLitePath
+				}(),
+			},
 		},
 		OpenAIEnabled: cfg.OpenAI != nil && cfg.OpenAI.Enabled,
 	}
@@ -775,21 +920,9 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 		resp.CloudAccounts = []configUICloudAccount{}
 	}
 
-	if len(cfg.Auth.BuiltinUsers) > 0 || len(cfg.Auth.Roles) > 0 {
-		local := &configUILocal{
-			Users: make([]configUIUser, len(cfg.Auth.BuiltinUsers)),
-			Roles: make([]configUIRole, len(cfg.Auth.Roles)),
-		}
-		for i, u := range cfg.Auth.BuiltinUsers {
-			local.Users[i] = configUIUser{Name: u.Name, Password: u.Password}
-		}
-		for i, r := range cfg.Auth.Roles {
-			users := r.Users
-			if users == nil {
-				users = []string{}
-			}
-			local.Roles[i] = configUIRole{Name: r.Name, Users: users}
-		}
+	if local, err := loadBuiltinLocalForUI(cfg, s.configPath); err != nil {
+		log.Printf("读取 builtin 本地用户失败: %v", err)
+	} else {
 		resp.Auth.Local = local
 	}
 	if cfg.Auth.OIDC != nil {
@@ -1030,6 +1163,11 @@ func (s *Server) handleSaveConfig(c *gin.Context) {
 	cfg, err := buildConfigFromUI(existing, req, detectConfigUIFieldPresence(raw))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := syncBuiltinSQLiteFromUILocal(cfg, s.configPath, req.Auth.Local); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "同步 SQLite builtin 用户失败: " + err.Error()})
 		return
 	}
 

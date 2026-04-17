@@ -514,8 +514,15 @@ type AuthConfig struct {
 	// 全局角色定义（所有认证方式共用；LDAP/OIDC 未来按映射规则写入此处）
 	Roles []RoleConfig `yaml:"roles,omitempty"`
 
-	LDAP *LDAPConfig `yaml:"ldap,omitempty"`
-	OIDC *OIDCConfig `yaml:"oidc,omitempty"`
+	Builtin *BuiltinAuthConfig `yaml:"builtin,omitempty"`
+	LDAP    *LDAPConfig        `yaml:"ldap,omitempty"`
+	OIDC    *OIDCConfig        `yaml:"oidc,omitempty"`
+}
+
+// BuiltinAuthConfig builtin 本地账号存储配置。
+type BuiltinAuthConfig struct {
+	Storage    string `yaml:"storage,omitempty"`    // yaml | sqlite，默认 yaml
+	SQLitePath string `yaml:"sqlitePath,omitempty"` // sqlite 文件路径；相对路径默认相对 config.yaml 所在目录
 }
 
 // JWTConfig JWT 令牌配置
@@ -733,6 +740,10 @@ func (c *Config) expandEnvVars() {
 	c.Auth.JWT.SecretKey = expandEnvVar(c.Auth.JWT.SecretKey)
 	c.Auth.JWT.ExpiresIn = expandEnvVar(c.Auth.JWT.ExpiresIn)
 	c.Auth.PasswordSalt = expandEnvVar(c.Auth.PasswordSalt)
+	if c.Auth.Builtin != nil {
+		c.Auth.Builtin.Storage = expandEnvVar(c.Auth.Builtin.Storage)
+		c.Auth.Builtin.SQLitePath = expandEnvVar(c.Auth.Builtin.SQLitePath)
+	}
 	if c.Auth.LDAP != nil {
 		c.Auth.LDAP.BindPassword = expandEnvVar(c.Auth.LDAP.BindPassword)
 	}
@@ -875,6 +886,45 @@ func (c *Config) applyCompatibilityDefaults() {
 			c.CloudAccounts[i].Endpoint = strings.TrimSpace(c.Global.Endpoint)
 		}
 	}
+
+	if c.Auth.Builtin != nil && strings.TrimSpace(c.Auth.Builtin.Storage) == "" {
+		c.Auth.Builtin.Storage = "yaml"
+	}
+}
+
+// BuiltinStorage 返回 builtin 存储类型；默认 yaml。
+func (c *Config) BuiltinStorage() string {
+	if c == nil || c.Auth.Builtin == nil {
+		return "yaml"
+	}
+	storage := strings.TrimSpace(strings.ToLower(c.Auth.Builtin.Storage))
+	if storage == "" {
+		return "yaml"
+	}
+	return storage
+}
+
+// ResolveBuiltinSQLitePath 返回 builtin sqlite 文件路径。
+func ResolveBuiltinSQLitePath(configPath string, builtin *BuiltinAuthConfig) string {
+	if builtin == nil {
+		if strings.TrimSpace(configPath) == "" {
+			return "builtin-users.db"
+		}
+		return filepath.Join(filepath.Dir(configPath), "builtin-users.db")
+	}
+
+	rawPath := strings.TrimSpace(builtin.SQLitePath)
+	if rawPath == "" {
+		if strings.TrimSpace(configPath) == "" {
+			return "builtin-users.db"
+		}
+		return filepath.Join(filepath.Dir(configPath), "builtin-users.db")
+	}
+
+	if filepath.IsAbs(rawPath) || strings.TrimSpace(configPath) == "" {
+		return filepath.Clean(rawPath)
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(configPath), rawPath))
 }
 
 // expandEnvVar 展开单个字符串中的环境变量引用

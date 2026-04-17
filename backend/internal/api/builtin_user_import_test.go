@@ -139,6 +139,58 @@ func TestHandleImportBuiltinUsersConflictDetails(t *testing.T) {
 	}
 }
 
+func TestHandleImportBuiltinUsersToSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.DefaultConfig()
+	cfg.Auth.Builtin = &config.BuiltinAuthConfig{
+		Storage:    "sqlite",
+		SQLitePath: "data/builtin-users.db",
+	}
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	server := &Server{
+		configUIToken: "test-token",
+		configPath:    configPath,
+		globalConfig:  cfg,
+	}
+	router := gin.New()
+	router.POST("/admin-ui/api/auth/builtin-users/import", server.configUITokenMiddleware(), server.handleImportBuiltinUsers)
+
+	body, contentType := buildBuiltinUsersImportRequestBody(t, "append", buildImportWorkbookForAPITest(t, [][]string{
+		{"sqlite.admin", "Strong@123456", "admin"},
+		{"sqlite.ops", "Temp@123456", "ops,user"},
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/admin-ui/api/auth/builtin-users/import?token=test-token", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	store, err := auth.NewSQLiteUserStore(filepath.Join(filepath.Dir(configPath), "data", "builtin-users.db"), cfg.Auth.PasswordSalt)
+	if err != nil {
+		t.Fatalf("failed to open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	users, err := store.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 sqlite users, got %+v", users)
+	}
+	if users[0].PasswordHash == "" || users[1].PasswordHash == "" {
+		t.Fatalf("expected sqlite users to have password hashes, got %+v", users)
+	}
+}
+
 func buildBuiltinUsersImportRequestBody(t *testing.T, mode string, workbook []byte) (*bytes.Buffer, string) {
 	t.Helper()
 

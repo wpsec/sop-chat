@@ -52,6 +52,10 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 			JWTSecretKey: "new-secret",
 			JWTExpiresIn: "48h",
 			PasswordSalt: "new-salt",
+			Builtin: &configUIBuiltin{
+				Storage:    "sqlite",
+				SQLitePath: "data/builtin-users.db",
+			},
 			OIDC: &configUIOIDC{
 				IssuerURL:        "https://login.example.com",
 				ClientID:         "client-id",
@@ -99,6 +103,9 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 	if cfg.Auth.LDAP == nil || cfg.Auth.LDAP.Host != "ldap.example.com" {
 		t.Fatalf("expected LDAP config to be preserved, got %+v", cfg.Auth.LDAP)
 	}
+	if cfg.Auth.Builtin == nil || cfg.Auth.Builtin.Storage != "sqlite" || cfg.Auth.Builtin.SQLitePath != "data/builtin-users.db" {
+		t.Fatalf("expected builtin sqlite config to be updated, got %+v", cfg.Auth.Builtin)
+	}
 	if cfg.Auth.OIDC == nil || cfg.Auth.OIDC.IssuerURL != "https://login.example.com" || cfg.Auth.OIDC.ClientID != "client-id" {
 		t.Fatalf("expected OIDC config to be updated, got %+v", cfg.Auth.OIDC)
 	}
@@ -108,8 +115,8 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 	if len(cfg.Auth.OIDC.RoleMappings) != 1 || cfg.Auth.OIDC.RoleMappings[0].External != "ops" {
 		t.Fatalf("expected OIDC role mappings to be updated, got %+v", cfg.Auth.OIDC.RoleMappings)
 	}
-	if len(cfg.Auth.BuiltinUsers) != 1 || cfg.Auth.BuiltinUsers[0].Name != "admin" {
-		t.Fatalf("expected builtin users to be updated, got %+v", cfg.Auth.BuiltinUsers)
+	if len(cfg.Auth.BuiltinUsers) != 0 {
+		t.Fatalf("expected builtin users to be omitted from config in sqlite mode, got %+v", cfg.Auth.BuiltinUsers)
 	}
 	if cfg.Auth.JWT.SecretKey != "new-secret" || cfg.Auth.JWT.ExpiresIn != "48h" {
 		t.Fatalf("expected JWT settings to be updated, got %+v", cfg.Auth.JWT)

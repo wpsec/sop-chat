@@ -24,6 +24,14 @@ type StoredUser struct {
 	UpdatedAt    string   `json:"updatedAt"`
 }
 
+// StoredRole 存储的角色信息。
+type StoredRole struct {
+	Name      string   `json:"name"`
+	Users     []string `json:"users"`
+	CreatedAt string   `json:"createdAt,omitempty"`
+	UpdatedAt string   `json:"updatedAt,omitempty"`
+}
+
 // getCurrentTime 获取当前时间字符串
 func getCurrentTime() string {
 	return time.Now().Format(time.RFC3339)

@@ -100,6 +100,42 @@ func (s *Server) handleImportBuiltinUsers(c *gin.Context) {
 		baseConfig = config.DefaultConfig()
 	}
 
+	if baseConfig.BuiltinStorage() == "sqlite" {
+		sqlitePath := config.ResolveBuiltinSQLitePath(configPath, baseConfig.Auth.Builtin)
+		store, err := auth.NewSQLiteUserStore(sqlitePath, baseConfig.Auth.PasswordSalt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "打开 SQLite 用户库失败: " + err.Error()})
+			return
+		}
+		defer store.Close()
+
+		report, err := store.ApplyImport(rows, mode)
+		if err != nil {
+			if writeBuiltinImportValidationError(c, err) {
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		warning := ""
+		if !containsString(baseConfig.Auth.Methods, "builtin") {
+			warning = "导入已写入 SQLite，但当前 auth.methods 不包含 builtin，导入用户暂时无法用于登录。"
+		}
+
+		resp := gin.H{
+			"message": buildBuiltinUsersImportMessage(report),
+			"report":  report,
+			"storage": "sqlite",
+		}
+		if warning != "" {
+			resp["warning"] = true
+			resp["warningMessage"] = warning
+		}
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
 	cfg, err := cloneConfigForSave(baseConfig)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

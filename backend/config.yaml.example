@@ -124,6 +124,15 @@ auth:
   #       roles:
   #         - audit
 
+  # builtin 本地账号存储（method: builtin 时启用）
+  # storage:
+  # - yaml: 兼容旧模式，账号和角色仍保存在 config.yaml 中
+  # - sqlite: 推荐，账号、角色和 Excel 导入都写入 SQLite
+  # builtin:
+  #   storage: sqlite
+  #   # 可选：sqlite 文件路径。相对路径默认相对 config.yaml 所在目录。
+  #   sqlitePath: data/builtin-users.db
+
 # ─── 通知渠道配置（可选）────────────────────────────────────────────────────────
 # 所有 IM / 消息渠道统一在 channels 下管理，新增渠道只需追加子字段
 # 钉钉支持多实例：每个条目对接一个数字员工（clientId 唯一标识一个实例）
