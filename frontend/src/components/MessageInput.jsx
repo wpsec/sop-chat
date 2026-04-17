@@ -4,13 +4,16 @@
  */
 import React, { useState, useRef } from 'react';
 
+const CANCEL_COMMANDS = new Set(['/取消', '/停止', '/abort']);
+
 const MessageInput = ({ onSend, onStop, disabled, isGenerating, placeholder = '请输入您的问题...' }) => {
   const [input, setInput] = useState('');
   const textareaRef = useRef(null);
+  const canSubmitWhileGenerating = CANCEL_COMMANDS.has(input.trim().toLowerCase());
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!disabled && input.trim()) {
+    if ((!disabled || canSubmitWhileGenerating) && input.trim()) {
       onSend(input.trim());
       setInput('');
     }
@@ -24,7 +27,7 @@ const MessageInput = ({ onSend, onStop, disabled, isGenerating, placeholder = '�
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isGenerating) {
+      if (!isGenerating || canSubmitWhileGenerating) {
         handleSubmit(e);
       }
     }
@@ -39,7 +42,7 @@ const MessageInput = ({ onSend, onStop, disabled, isGenerating, placeholder = '�
           onChange={(e) => setInput(e.target.value)}
           onKeyPress={handleKeyPress}
           placeholder={placeholder}
-          disabled={disabled}
+          disabled={disabled && !isGenerating}
           rows="3"
           className="message-input"
         />

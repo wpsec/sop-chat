@@ -33,11 +33,17 @@ const workerQueueSize = 8
 const (
 	maxMarkdownProgressUpdates = 4
 	maxCardProgressStages      = 6
+	cancelAnalysisReplyText    = "已取消本次分析，你可以重新提问。"
+	noRunningAnalysisReplyText = "当前没有正在进行的分析任务。"
 )
 
 type chatProgressUpdate struct {
 	Stage       string
 	Accumulated string
+}
+
+type runningTask struct {
+	cancel context.CancelFunc
 }
 
 type markdownProgressReporter struct {
@@ -83,6 +89,8 @@ type Bot struct {
 
 	// key（机器人+会话+人）-> chan func()，每个 key 对应一个串行 worker
 	workerQueues sync.Map
+	// key（会话+发送者）-> 当前正在执行的任务，用于响应取消命令
+	runningTasks sync.Map
 
 	// Stream 客户端生命周期（Start/Stop 时持有锁）
 	cliMu sync.Mutex
@@ -463,6 +471,20 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 	senderId := data.SenderId
 	senderStaffId := data.SenderStaffId
 	msgId := data.MsgId
+	taskKey := conversationTaskKey(conversationId, senderId, senderStaffId, senderNick)
+	replier := chatbot.NewChatbotReplier()
+
+	if isCancelCommand(userText) {
+		if b.cancelRunningTask(taskKey) {
+			log.Printf("[DingTalk] 收到取消命令，已取消当前分析 conversationId=%s sender=%s", conversationId, senderNick)
+			_ = replier.SimpleReplyText(ctx, webhook, []byte(cancelAnalysisReplyText))
+		} else {
+			log.Printf("[DingTalk] 收到取消命令，但当前没有运行中的任务 conversationId=%s sender=%s", conversationId, senderNick)
+			_ = replier.SimpleReplyText(ctx, webhook, []byte(noRunningAnalysisReplyText))
+		}
+		return nil, nil
+	}
+
 	// 路由解析：按群名匹配，找不到则用默认配置
 	route := b.resolveRoute(conversationType, conversationTitle, userText)
 	if route.employeeName != cfg.EmployeeName {
@@ -474,16 +496,22 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 	// worker queue key 不含 variable，保证同一会话的消息串行处理
 	queueKey := threadKey(conversationId, senderNick, route.employeeName)
 
-	replier := chatbot.NewChatbotReplier()
-
 	// 构造本次请求的处理函数，投入该 key 的串行队列
 	work := func() {
 		deadline := time.Unix(expiredAt/1000, 0).Add(-5 * time.Second)
 		asyncCtx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
+		task := b.registerRunningTask(taskKey, cancel)
+		defer func() {
+			b.unregisterRunningTask(taskKey, task)
+			cancel()
+		}()
 
 		threadId, err := b.getOrCreateThreadIdWithRoute(conversationId, senderNick, route)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Printf("[DingTalk] 分析已取消，线程初始化中止 conversationId=%s sender=%s", conversationId, senderNick)
+				return
+			}
 			log.Printf("[DingTalk] 创建线程失败: %v", err)
 			replyError(asyncCtx, webhook, err)
 			return
@@ -519,6 +547,10 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, route, onUpdate)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Printf("[DingTalk] 分析已取消 conversationId=%s sender=%s", conversationId, senderNick)
+				return
+			}
 			log.Printf("[DingTalk] 调用数字员工失败: %v", err)
 			replyError(asyncCtx, webhook, err)
 			return
@@ -634,6 +666,59 @@ func extractText(data *chatbot.BotCallbackDataModel) string {
 func threadKey(conversationId, senderNick, employeeName string) string {
 	h := md5.Sum([]byte(conversationId + "\x00" + senderNick + "\x00" + employeeName))
 	return fmt.Sprintf("%x", h)
+}
+
+func conversationTaskKey(conversationId, senderId, senderStaffId, senderNick string) string {
+	actor := strings.TrimSpace(senderId)
+	if actor == "" {
+		actor = strings.TrimSpace(senderStaffId)
+	}
+	if actor == "" {
+		actor = strings.TrimSpace(senderNick)
+	}
+	h := md5.Sum([]byte(conversationId + "\x00" + actor))
+	return fmt.Sprintf("%x", h)
+}
+
+func isCancelCommand(text string) bool {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "/取消", "/停止", "/abort":
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Bot) registerRunningTask(key string, cancel context.CancelFunc) *runningTask {
+	if key == "" || cancel == nil {
+		return nil
+	}
+	task := &runningTask{cancel: cancel}
+	b.runningTasks.Store(key, task)
+	return task
+}
+
+func (b *Bot) unregisterRunningTask(key string, task *runningTask) {
+	if key == "" || task == nil {
+		return
+	}
+	b.runningTasks.CompareAndDelete(key, task)
+}
+
+func (b *Bot) cancelRunningTask(key string) bool {
+	if key == "" {
+		return false
+	}
+	value, ok := b.runningTasks.Load(key)
+	if !ok {
+		return false
+	}
+	task, ok := value.(*runningTask)
+	if !ok || task == nil || task.cancel == nil {
+		return false
+	}
+	task.cancel()
+	return true
 }
 
 func threadScope(cloudAccountID, project, workspace, region string) string {
@@ -1247,6 +1332,10 @@ func (b *Bot) replyWithStreamingCard(
 
 	// 3. 创建并投放卡片（失败则返回 errCardCreate 触发降级）
 	if _, err := apiClient.CreateAndDeliverCard(ctx, cardReq); err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("[DingTalk] 创建流式卡片前任务已取消，跳过后续处理")
+			return nil
+		}
 		log.Printf("[DingTalk] 创建流式卡片失败: %v", err)
 		return errCardCreate
 	}
@@ -1258,7 +1347,7 @@ func (b *Bot) replyWithStreamingCard(
 		replyDraft  string
 		lastContent = initialContent
 	)
-	pushCardUpdate := func(content string, finalize bool, isError bool) {
+	pushCardUpdate := func(updateCtx context.Context, content string, finalize bool, isError bool) {
 		content = strings.TrimSpace(content)
 		if content == "" {
 			content = initialContent
@@ -1279,7 +1368,7 @@ func (b *Bot) replyWithStreamingCard(
 		if isError {
 			req.IsError = true
 		}
-		if err := apiClient.StreamingUpdate(ctx, req); err != nil {
+		if err := apiClient.StreamingUpdate(updateCtx, req); err != nil {
 			log.Printf("[DingTalk] 流式更新卡片失败（非致命）: %v", err)
 		}
 	}
@@ -1291,7 +1380,7 @@ func (b *Bot) replyWithStreamingCard(
 		if update.Accumulated != "" {
 			replyDraft = update.Accumulated
 		}
-		pushCardUpdate(renderCardProgressContent(progressFeedbackEnabled, stageTrail, replyDraft, ""), false, false)
+		pushCardUpdate(ctx, renderCardProgressContent(progressFeedbackEnabled, stageTrail, replyDraft, ""), false, false)
 	}
 
 	replyText, newThreadId, queryErr := b.queryEmployeeStreaming(ctx, message, threadId, route, onUpdate)
@@ -1307,14 +1396,25 @@ func (b *Bot) replyWithStreamingCard(
 	}
 	finalStages := stageTrail
 	finalReplyText := replyText
+	finalizeCtx := ctx
+	finalizeCancel := func() {}
 	if queryErr != nil {
-		finalReplyText = "查询失败: " + queryErr.Error()
-		if progressFeedbackEnabled {
-			finalStages = appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages)
+		if errors.Is(queryErr, context.Canceled) {
+			finalReplyText = cancelAnalysisReplyText
+			if progressFeedbackEnabled {
+				finalStages = appendUniqueStage(stageTrail, "分析已取消，可重新提问", maxCardProgressStages)
+			}
+			finalizeCtx, finalizeCancel = context.WithTimeout(context.Background(), 5*time.Second)
+		} else {
+			finalReplyText = "查询失败: " + queryErr.Error()
+			if progressFeedbackEnabled {
+				finalStages = appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages)
+			}
 		}
 	}
+	defer finalizeCancel()
 	finalContent := renderCardProgressContent(progressFeedbackEnabled, finalStages, finalReplyText, shareURL)
-	pushCardUpdate(finalContent, true, queryErr != nil)
+	pushCardUpdate(finalizeCtx, finalContent, true, queryErr != nil && !errors.Is(queryErr, context.Canceled))
 
 	// 6. 更新 threadId 缓存
 	if newThreadId != "" && newThreadId != threadId {

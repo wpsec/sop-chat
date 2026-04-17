@@ -21,6 +21,12 @@ import { sendChatMessageStream, createThread, getEmployee, listThreads, getThrea
 import { copyToClipboard } from '../utils/clipboard';
 import { convertBackendMessages } from '../utils/chatMessages';
 
+const CANCEL_COMMANDS = new Set(['/取消', '/停止', '/abort']);
+const CANCELLED_ANALYSIS_MESSAGE = '已取消本次分析，你可以重新提问。';
+const CANCELLED_ANALYSIS_SUFFIX = '\n\n_[本次分析已取消，可重新提问]_';
+const NO_RUNNING_ANALYSIS_MESSAGE = '当前没有正在进行的分析任务。';
+
+const isCancelCommand = (content = '') => CANCEL_COMMANDS.has(content.trim().toLowerCase());
 
 const ChatWindow = () => {
   const { employeeId } = useParams();
@@ -168,6 +174,10 @@ const ChatWindow = () => {
     };
   }, []);
 
+  const appendAssistantMessage = useCallback((content) => {
+    setMessages((prev) => [...prev, { role: 'assistant', content }]);
+  }, []);
+
   const scrollToBottom = () => {
     const container = messagesContainerRef.current;
     if (container) {
@@ -225,7 +235,29 @@ const ChatWindow = () => {
     setStreamingMessage(null);
   };
 
+  const handleCancelCommand = useCallback(() => {
+    if (loading && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      return;
+    }
+
+    if (pendingCloudAccountConfirm) {
+      setPendingCloudAccountConfirm(null);
+      setError(null);
+      appendAssistantMessage(CANCELLED_ANALYSIS_MESSAGE);
+      return;
+    }
+
+    appendAssistantMessage(NO_RUNNING_ANALYSIS_MESSAGE);
+  }, [appendAssistantMessage, loading, pendingCloudAccountConfirm]);
+
   const handleSendMessage = async (content) => {
+    if (isCancelCommand(content)) {
+      handleCancelCommand();
+      return;
+    }
+
     const pendingConfirmation = pendingCloudAccountConfirm;
     const isCloudAccountConfirmation = Boolean(pendingConfirmation);
 
@@ -528,7 +560,7 @@ const ChatWindow = () => {
             // Add a cancellation notice to the events
             streamingMessageRef.current.events.push({
               type: 'content',
-              data: '\n\n_[已停止生成]_',
+              data: CANCELLED_ANALYSIS_SUFFIX,
               timestamp: Date.now()
             });
             
@@ -541,7 +573,7 @@ const ChatWindow = () => {
             // No content received yet, show cancellation message
             const cancelMessage = {
               role: 'assistant',
-              content: '生成已被用户取消。'
+              content: CANCELLED_ANALYSIS_MESSAGE
             };
             setMessages((prev) => [...prev, cancelMessage]);
           }
@@ -654,9 +686,11 @@ const ChatWindow = () => {
   };
 
   const cloudAccountOptionsText = pendingCloudAccountConfirm?.options?.join(' / ') || '';
-  const messageInputPlaceholder = pendingCloudAccountConfirm
-    ? '请输入环境别名、云账号 ID 或订阅全名...'
-    : '请输入您的问题...';
+  const messageInputPlaceholder = loading
+    ? '正在分析中，输入 /取消 后回车可终止'
+    : pendingCloudAccountConfirm
+      ? '请输入环境别名、云账号 ID 或订阅全名...'
+      : '请输入您的问题...';
 
   return (
     <div className="chat-window">

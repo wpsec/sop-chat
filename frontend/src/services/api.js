@@ -5,8 +5,8 @@
 import axios from 'axios';
 import { getToken } from './auth';
 
-// Version marker for debugging
-console.log('[API Service] Loaded version with error event support - v1.0.1');
+// 调试标记，便于确认最新前端资源已加载
+console.log('[API Service] Loaded latest API client bundle');
 
 // 自动检测 API 基础 URL
 // 1. 优先使用当前页面的 origin（适用于生产环境和开发环境）

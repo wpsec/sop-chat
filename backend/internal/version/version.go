@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const BaseVersion = "v0.3.0-beta.1"
+const BaseVersion = "v0.3.0-beta.2"
 
 var (
 	Version   = BaseVersion
