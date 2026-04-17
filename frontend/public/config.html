@@ -273,6 +273,11 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
         <input type="number" id="g-port" min="1" max="65535" placeholder="8080">
         <span class="hint">修改后需重启生效</span>
       </div>
+      <div class="field" style="grid-column:1/-1">
+        <label>对外访问地址 Public Base URL</label>
+        <input type="text" id="g-public-base-url" placeholder="https://app.example.com">
+        <span class="hint">用于生成钉钉/分享链接。建议填写浏览器和 IM 可直接访问的完整地址，不带末尾斜杠。</span>
+      </div>
       <div class="field">
         <label>语言 Language</label>
         <select id="g-lang">
@@ -305,6 +310,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <span class="badge-hot">timeZone</span>
     <span class="badge-hot">language</span>
     <span class="badge-hot">bindThreadToProcess</span>
+    <span class="badge-hot">publicBaseURL</span>
     &nbsp;
     <strong>需重启：</strong>
     <span class="badge-cold">host</span>
@@ -2405,6 +2411,7 @@ function populate(data) {
   renderCloudAccounts((data.cloudAccounts || []).length ? data.cloudAccounts : [{ id: DEFAULT_CLOUD_ACCOUNT_ID, provider: 'aliyun' }]);
   setVal('g-host', g.host || '0.0.0.0');
   setVal('g-port', g.port || 8080);
+  setVal('g-public-base-url', g.publicBaseURL || '');
   setVal('g-tz', g.timeZone || 'Asia/Shanghai');
   setVal('g-lang', g.language || 'zh');
   document.getElementById('g-bind-thread-to-process').checked =
@@ -2449,6 +2456,7 @@ function collect() {
     server: {
       host:            val('g-host') || '0.0.0.0',
       port:            parseInt(val('g-port')) || 8080,
+      publicBaseURL:   val('g-public-base-url') || '',
       timeZone:        val('g-tz') || 'Asia/Shanghai',
       language:        val('g-lang') || 'zh',
       bindThreadToProcess: document.getElementById('g-bind-thread-to-process').checked,

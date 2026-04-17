@@ -43,6 +43,7 @@ type Config struct {
 type ServerConfig struct {
 	Host                string `yaml:"host,omitempty"`                // 服务监听地址，默认 0.0.0.0
 	Port                int    `yaml:"port,omitempty"`                // 服务监听端口，默认 8080
+	PublicBaseURL       string `yaml:"publicBaseURL,omitempty"`       // 对外访问地址，用于生成分享链接
 	TimeZone            string `yaml:"timeZone,omitempty"`            // 时区设置
 	Language            string `yaml:"language,omitempty"`            // 语言设置
 	BindThreadToProcess *bool  `yaml:"bindThreadToProcess,omitempty"` // 是否将 thread 绑定到进程生命周期
@@ -1348,6 +1349,26 @@ func (c *Config) GetHost() string {
 // GetListenAddr 返回完整的监听地址，格式为 host:port
 func (c *Config) GetListenAddr() string {
 	return fmt.Sprintf("%s:%d", c.GetHost(), c.GetPort())
+}
+
+// GetPublicBaseURL 获取对外访问的基础地址。
+// 优先使用 server.publicBaseURL；为空时尝试基于 host/port 推导一个 http 地址。
+func (c *Config) GetPublicBaseURL() string {
+	if c == nil {
+		return ""
+	}
+
+	if base := strings.TrimSpace(c.Server.PublicBaseURL); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+
+	host := strings.TrimSpace(c.GetHost())
+	switch strings.ToLower(host) {
+	case "", "0.0.0.0", "::", "[::]":
+		return ""
+	}
+
+	return fmt.Sprintf("http://%s:%d", host, c.GetPort())
 }
 
 // SaveConfig 将 Config 结构体序列化为 YAML 并持久化到文件

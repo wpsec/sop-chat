@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -28,6 +29,46 @@ var atMentionPattern = regexp.MustCompile(`@\S+\s*`)
 
 // workerQueueSize 是每个串行队列允许积压的最大消息数
 const workerQueueSize = 8
+
+const (
+	maxMarkdownProgressUpdates = 4
+	maxCardProgressStages      = 6
+)
+
+type chatProgressUpdate struct {
+	Stage       string
+	Accumulated string
+}
+
+type markdownProgressReporter struct {
+	replier    *chatbot.ChatbotReplier
+	webhook    string
+	sentStages map[string]struct{}
+	sentCount  int
+}
+
+func newMarkdownProgressReporter(webhook string) *markdownProgressReporter {
+	return &markdownProgressReporter{
+		replier:    chatbot.NewChatbotReplier(),
+		webhook:    webhook,
+		sentStages: make(map[string]struct{}),
+	}
+}
+
+func (r *markdownProgressReporter) ReportStage(ctx context.Context, stage string) {
+	stage = strings.TrimSpace(stage)
+	if r == nil || stage == "" || r.webhook == "" || r.sentCount >= maxMarkdownProgressUpdates {
+		return
+	}
+	if _, exists := r.sentStages[stage]; exists {
+		return
+	}
+	r.sentStages[stage] = struct{}{}
+	r.sentCount++
+	if err := r.replier.SimpleReplyText(ctx, r.webhook, []byte("阶段反馈："+stage)); err != nil {
+		log.Printf("[DingTalk] 发送阶段反馈失败: %v", err)
+	}
+}
 
 // Bot 封装钉钉机器人及其与 CMS 的对接逻辑
 type Bot struct {
@@ -247,6 +288,107 @@ func replyError(ctx context.Context, webhook string, err error) {
 	_ = replier.SimpleReplyText(ctx, webhook, []byte("处理失败："+errorMessage(err)))
 }
 
+func appendUniqueStage(stages []string, stage string, maxStages int) []string {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return stages
+	}
+	if len(stages) > 0 && stages[len(stages)-1] == stage {
+		return stages
+	}
+	stages = append(stages, stage)
+	if maxStages > 0 && len(stages) > maxStages {
+		stages = stages[len(stages)-maxStages:]
+	}
+	return stages
+}
+
+func stringifyAny(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func formatToolStage(tool map[string]interface{}) string {
+	if tool == nil {
+		return ""
+	}
+	name := stringifyAny(tool["name"])
+	if name == "" {
+		name = "未知工具"
+	}
+	switch strings.ToLower(stringifyAny(tool["status"])) {
+	case "start":
+		return fmt.Sprintf("正在调用工具「%s」", name)
+	case "fail", "failed", "error":
+		return fmt.Sprintf("工具「%s」执行失败，正在继续整理可用结果", name)
+	default:
+		return ""
+	}
+}
+
+func appendShareSentence(replyText, shareURL string) string {
+	replyText = strings.TrimSpace(replyText)
+	shareURL = strings.TrimSpace(shareURL)
+	if shareURL == "" {
+		return replyText
+	}
+	shareSentence := "完整对话与分析过程：" + shareURL
+	if replyText == "" {
+		return shareSentence
+	}
+	return replyText + "\n\n" + shareSentence
+}
+
+func renderCardProgressContent(stages []string, replyText, shareURL string) string {
+	lines := make([]string, 0, len(stages)+6)
+	if len(stages) > 0 {
+		lines = append(lines, "处理进度：")
+		for i, stage := range stages {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, stage))
+		}
+	}
+	replyText = appendShareSentence(replyText, shareURL)
+	if replyText != "" {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "当前输出：", replyText)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func (b *Bot) buildShareURL(route resolvedRoute, threadID string) string {
+	threadID = strings.TrimSpace(threadID)
+	employeeName := strings.TrimSpace(route.employeeName)
+	globalCfg := b.GlobalConfig()
+	if threadID == "" || employeeName == "" || globalCfg == nil {
+		return ""
+	}
+
+	base := strings.TrimSpace(globalCfg.GetPublicBaseURL())
+	if base == "" {
+		return ""
+	}
+	base = strings.TrimRight(base, "/")
+
+	values := url.Values{}
+	if cloudAccountID := config.NormalizeCloudAccountID(route.cloudAccountID); cloudAccountID != "" && cloudAccountID != config.DefaultCloudAccountID {
+		values.Set("cloudAccountId", cloudAccountID)
+	}
+
+	shareURL := fmt.Sprintf("%s/#/share/%s/%s", base, url.PathEscape(employeeName), url.PathEscape(threadID))
+	if query := values.Encode(); query != "" {
+		shareURL += "?" + query
+	}
+	return shareURL
+}
+
 // onMessage 处理钉钉消息回调
 // 签名符合 chatbot.IChatBotMessageHandler
 func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel) ([]byte, error) {
@@ -316,7 +458,7 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 		// 尝试流式卡片回复
 		cfg := b.config()
 		if cfg.CardTemplateId != "" {
-			err := b.replyWithStreamingCard(asyncCtx, route, userText, threadId, conversationId, conversationType, senderId, senderStaffId, senderNick, msgId)
+			err := b.replyWithStreamingCard(asyncCtx, webhook, route, userText, threadId, conversationId, conversationType, senderId, senderStaffId, senderNick, msgId)
 			if err == nil {
 				log.Printf("[DingTalk] 流式卡片回复完成")
 				return
@@ -327,8 +469,14 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		// 走 Markdown 路径：先告知用户已收到
 		_ = replier.SimpleReplyText(asyncCtx, webhook, []byte("收到，正在处理中..."))
+		progressReporter := newMarkdownProgressReporter(webhook)
+		progressReporter.ReportStage(asyncCtx, "已建立会话，正在分析问题")
 
-		replyText, newThreadId, err := b.queryEmployeeWithRoute(asyncCtx, userText, threadId, route)
+		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, route, func(update chatProgressUpdate) {
+			if update.Stage != "" {
+				progressReporter.ReportStage(asyncCtx, update.Stage)
+			}
+		})
 		if err != nil {
 			log.Printf("[DingTalk] 调用数字员工失败: %v", err)
 			replyError(asyncCtx, webhook, err)
@@ -345,17 +493,20 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		log.Printf("[DingTalk] 正在回复钉钉消息，sessionWebhook=%s", webhook)
 
+		shareURL := b.buildShareURL(route, newThreadId)
+		finalReplyText := appendShareSentence(replyText, shareURL)
+
 		var replyErr error
 		if conversationType == "2" {
 			// 群聊：@ 提问者，触发客户端通知和高亮
-			replyErr = replyAtMarkdown(asyncCtx, webhook, senderId, "回复", replyText)
+			replyErr = replyAtMarkdown(asyncCtx, webhook, senderId, "回复", finalReplyText)
 		} else {
 			// 单聊：直接回复，无需 @
 			replyErr = chatbot.NewChatbotReplier().ReplyMessage(asyncCtx, webhook, map[string]interface{}{
 				"msgtype": "markdown",
 				"markdown": map[string]interface{}{
 					"title": "回复",
-					"text":  replyText,
+					"text":  finalReplyText,
 				},
 			})
 		}
@@ -854,8 +1005,13 @@ func (b *Bot) buildCMSChatRequest(message, threadId string, route resolvedRoute)
 	}
 }
 
-// queryEmployeeWithRoute 向 CMS 数字员工发送消息，使用路由级别的 product/project/workspace。
-func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId string, route resolvedRoute) (string, string, error) {
+// streamEmployeeWithRoute 向 CMS 数字员工发送消息，并通过回调上报阶段进度与累积输出。
+func (b *Bot) streamEmployeeWithRoute(
+	ctx context.Context,
+	message, threadId string,
+	route resolvedRoute,
+	onUpdate func(chatProgressUpdate),
+) (string, string, error) {
 	sopClient, err := b.newSopClientWithConfig(route.clientConfig)
 	if err != nil {
 		return "", "", err
@@ -872,6 +1028,19 @@ func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId stri
 
 	var textParts []string
 	returnedThreadId := threadId
+	answeringStarted := false
+
+	emitUpdate := func(update chatProgressUpdate) {
+		if onUpdate == nil {
+			return
+		}
+		if strings.TrimSpace(update.Stage) == "" && strings.TrimSpace(update.Accumulated) == "" {
+			return
+		}
+		onUpdate(update)
+	}
+
+	emitUpdate(chatProgressUpdate{Stage: "已建立会话，正在分析问题"})
 
 	for {
 		select {
@@ -893,6 +1062,14 @@ func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId stri
 				if msg == nil {
 					continue
 				}
+				for _, tool := range msg.Tools {
+					if stage := formatToolStage(tool); stage != "" {
+						emitUpdate(chatProgressUpdate{
+							Stage:       stage,
+							Accumulated: strings.Join(textParts, ""),
+						})
+					}
+				}
 				// 从 Contents 中提取 text 类型的内容
 				for _, content := range msg.Contents {
 					if content == nil {
@@ -902,6 +1079,16 @@ func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId stri
 						if v, ok := content["value"]; ok {
 							if s, ok := v.(string); ok {
 								textParts = append(textParts, s)
+								accumulated := strings.Join(textParts, "")
+								if !answeringStarted {
+									answeringStarted = true
+									emitUpdate(chatProgressUpdate{
+										Stage:       "已获取分析结果，正在整理回答",
+										Accumulated: accumulated,
+									})
+									continue
+								}
+								emitUpdate(chatProgressUpdate{Accumulated: accumulated})
 							}
 						}
 					}
@@ -917,70 +1104,19 @@ func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId stri
 	}
 }
 
-// queryEmployeeStreaming 向 CMS 数字员工发送消息，通过 onChunk 回调流式返回文本片段。
-// onChunk(accumulated) — accumulated 是截至目前累积的完整文本。
+// queryEmployeeWithRoute 向 CMS 数字员工发送消息，使用路由级别的 product/project/workspace。
+func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId string, route resolvedRoute) (string, string, error) {
+	return b.streamEmployeeWithRoute(ctx, message, threadId, route, nil)
+}
+
+// queryEmployeeStreaming 向 CMS 数字员工发送消息，通过 onUpdate 回调上报阶段进度与累积输出。
 func (b *Bot) queryEmployeeStreaming(
 	ctx context.Context,
 	message, threadId string,
 	route resolvedRoute,
-	onChunk func(accumulated string),
+	onUpdate func(chatProgressUpdate),
 ) (string, string, error) {
-	sopClient, err := b.newSopClient()
-	if err != nil {
-		return "", "", err
-	}
-	cms := sopClient.CmsClient
-
-	request := b.buildCMSChatRequest(message, threadId, route)
-	runtime := sopchat.NewSSERuntimeOptions()
-	responseChan := make(chan *cmsclient.CreateChatResponse)
-	errorChan := make(chan error)
-	go cms.CreateChatWithSSECtx(ctx, request, make(map[string]*string), runtime, responseChan, errorChan)
-
-	var textParts []string
-	returnedThreadId := threadId
-
-	for {
-		select {
-		case <-ctx.Done():
-			return strings.Join(textParts, ""), returnedThreadId, ctx.Err()
-
-		case response, ok := <-responseChan:
-			if !ok {
-				return strings.Join(textParts, ""), returnedThreadId, nil
-			}
-			if response.Body == nil {
-				continue
-			}
-			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
-			}
-			for _, msg := range response.Body.Messages {
-				if msg == nil {
-					continue
-				}
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok {
-								textParts = append(textParts, s)
-								onChunk(strings.Join(textParts, ""))
-							}
-						}
-					}
-				}
-			}
-
-		case err, ok := <-errorChan:
-			if ok && err != nil {
-				return strings.Join(textParts, ""), returnedThreadId, err
-			}
-			return strings.Join(textParts, ""), returnedThreadId, nil
-		}
-	}
+	return b.streamEmployeeWithRoute(ctx, message, threadId, route, onUpdate)
 }
 
 // errCardCreate 是卡片创建失败的 sentinel error，用于区分降级场景
@@ -991,6 +1127,7 @@ var errCardCreate = errors.New("card create failed")
 // 返回 nil 表示流式卡片流程已完成（即使 CMS 查询出错，也已通过卡片展示错误信息）。
 func (b *Bot) replyWithStreamingCard(
 	ctx context.Context,
+	webhook string,
 	route resolvedRoute,
 	message, threadId string,
 	conversationId, conversationType, senderId, senderStaffId, senderNick, msgId string,
@@ -1015,6 +1152,8 @@ func (b *Bot) replyWithStreamingCard(
 	outTrackId := fmt.Sprintf("sop-%s-%d", msgId, time.Now().UnixMilli())
 
 	// 2. 构建投放请求
+	initialStages := []string{"已收到问题，正在准备分析"}
+	initialContent := renderCardProgressContent(initialStages, "", "")
 	var cardReq *openapi.CreateAndDeliverCardRequest
 	if conversationType == "2" {
 		// 群聊
@@ -1023,7 +1162,7 @@ func (b *Bot) replyWithStreamingCard(
 			OutTrackId:     outTrackId,
 			CallbackType:   "STREAM",
 			OpenSpaceId:    "dtv1.card//IM_GROUP." + conversationId,
-			CardData:       &openapi.CardData{CardParamMap: map[string]string{contentKey: "正在思考中..."}},
+			CardData:       &openapi.CardData{CardParamMap: map[string]string{contentKey: initialContent}},
 			ImGroupOpenSpaceModel: &openapi.ImGroupOpenSpaceModel{
 				SupportForward: true,
 				Notification: &openapi.ImGroupOpenSpaceModelNotification{
@@ -1042,7 +1181,7 @@ func (b *Bot) replyWithStreamingCard(
 			OutTrackId:     outTrackId,
 			CallbackType:   "STREAM",
 			OpenSpaceId:    "dtv1.card//IM_ROBOT." + senderStaffId,
-			CardData:       &openapi.CardData{CardParamMap: map[string]string{contentKey: "正在思考中..."}},
+			CardData:       &openapi.CardData{CardParamMap: map[string]string{contentKey: initialContent}},
 			ImRobotOpenSpaceModel: &openapi.ImRobotOpenSpaceModel{
 				SupportForward: true,
 				Notification: &openapi.ImRobotOpenSpaceModelNotification{
@@ -1064,46 +1203,69 @@ func (b *Bot) replyWithStreamingCard(
 	}
 
 	// 4. 流式查询 CMS 并实时更新卡片
-	var guid int64
-	onChunk := func(accumulated string) {
+	var (
+		guid        int64
+		stageTrail  = initialStages
+		replyDraft  string
+		lastContent = initialContent
+	)
+	pushCardUpdate := func(content string, finalize bool, isError bool) {
+		content = strings.TrimSpace(content)
+		if content == "" {
+			content = initialContent
+		}
+		if !finalize && content == lastContent {
+			return
+		}
+		lastContent = content
 		guid++
-		if err := apiClient.StreamingUpdate(ctx, &openapi.StreamingUpdateRequest{
+		req := &openapi.StreamingUpdateRequest{
 			OutTrackId: outTrackId,
 			GUID:       fmt.Sprintf("%d", guid),
 			Key:        contentKey,
-			Content:    accumulated,
+			Content:    content,
 			IsFull:     true,
-			IsFinalize: false,
-		}); err != nil {
+			IsFinalize: finalize,
+		}
+		if isError {
+			req.IsError = true
+		}
+		if err := apiClient.StreamingUpdate(ctx, req); err != nil {
 			log.Printf("[DingTalk] 流式更新卡片失败（非致命）: %v", err)
 		}
 	}
 
-	replyText, newThreadId, queryErr := b.queryEmployeeStreaming(ctx, message, threadId, route, onChunk)
+	onUpdate := func(update chatProgressUpdate) {
+		if update.Stage != "" {
+			stageTrail = appendUniqueStage(stageTrail, update.Stage, maxCardProgressStages)
+		}
+		if update.Accumulated != "" {
+			replyDraft = update.Accumulated
+		}
+			pushCardUpdate(renderCardProgressContent(stageTrail, replyDraft, ""), false, false)
+		}
+
+		replyText, newThreadId, queryErr := b.queryEmployeeStreaming(ctx, message, threadId, route, onUpdate)
 
 	// 5. 发送最终帧
-	guid++
-	finalReq := &openapi.StreamingUpdateRequest{
-		OutTrackId: outTrackId,
-		GUID:       fmt.Sprintf("%d", guid),
-		Key:        contentKey,
-		Content:    replyText,
-		IsFull:     true,
-		IsFinalize: true,
+	shareURL := ""
+	if queryErr == nil {
+		shareURL = b.buildShareURL(route, newThreadId)
 	}
+	finalContent := renderCardProgressContent(stageTrail, replyText, shareURL)
 	if queryErr != nil {
-		finalReq.IsError = true
-		finalReq.Content = "查询失败: " + queryErr.Error()
+		finalContent = renderCardProgressContent(
+			appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages),
+			"查询失败: "+queryErr.Error(),
+			"",
+		)
 	}
-	if err := apiClient.StreamingUpdate(ctx, finalReq); err != nil {
-		log.Printf("[DingTalk] 发送最终帧失败: %v", err)
-	}
+	pushCardUpdate(finalContent, true, queryErr != nil)
 
 	// 6. 更新 threadId 缓存
 	if newThreadId != "" && newThreadId != threadId {
 		scope := threadScope(route.cloudAccountID, route.project, route.workspace, route.region)
 		b.threads.Store(threadKey(conversationId, senderNick, route.employeeName)+"\x00"+scope, newThreadId)
 	}
-
 	return nil
 }

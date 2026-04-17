@@ -116,6 +116,7 @@ func (t *configUIScheduledTask) effectiveWebhooks() []configUIWebhook {
 type configUIServer struct {
 	Host                string `json:"host"`
 	Port                int    `json:"port"`
+	PublicBaseURL       string `json:"publicBaseURL"`
 	TimeZone            string `json:"timeZone"`
 	Language            string `json:"language"`
 	BindThreadToProcess *bool  `json:"bindThreadToProcess,omitempty"`
@@ -560,6 +561,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 	if presence.Server {
 		cfg.Server.Host = req.Server.Host
 		cfg.Server.Port = req.Server.Port
+		cfg.Server.PublicBaseURL = strings.TrimSpace(req.Server.PublicBaseURL)
 		cfg.Server.TimeZone = req.Server.TimeZone
 		cfg.Server.Language = req.Server.Language
 		if req.Server.BindThreadToProcess != nil {
@@ -966,10 +968,11 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 
 	resp := configUIResponse{
 		Server: configUIServer{
-			Host:     cfg.GetHost(),
-			Port:     cfg.GetPort(),
-			TimeZone: cfg.GetTimeZone(),
-			Language: cfg.GetLanguage(),
+			Host:          cfg.GetHost(),
+			Port:          cfg.GetPort(),
+			PublicBaseURL: cfg.Server.PublicBaseURL,
+			TimeZone:      cfg.GetTimeZone(),
+			Language:      cfg.GetLanguage(),
 			BindThreadToProcess: func() *bool {
 				v := cfg.BindThreadToProcess()
 				return &v
