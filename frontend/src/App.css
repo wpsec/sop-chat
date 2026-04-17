@@ -886,6 +886,38 @@ body {
   letter-spacing: 0.02em;
 }
 
+.guardrail-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.guardrail-badge-warning {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
+.guardrail-badge-positive {
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+}
+
+.guardrail-note {
+  margin: 2px 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(217, 119, 6, 0.08);
+  border: 1px solid rgba(217, 119, 6, 0.16);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* Message Body - Container for tool calls and content */
 .message-body {
   width: 100%;

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sop-chat/internal/config"
 	"time"
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
@@ -40,6 +41,8 @@ func (c *Client) SendMessage(opts *ChatOptions, handler ChatMessageHandler) (*Ch
 		variables["skill"] = "sop"
 	}
 
+	message := config.ApplyReplyStyleInstruction(opts.Message, false, opts.ProductType)
+
 	// 创建聊天请求
 	request := &cmsclient.CreateChatRequest{
 		DigitalEmployeeName: tea.String(opts.EmployeeName),
@@ -51,7 +54,7 @@ func (c *Client) SendMessage(opts *ChatOptions, handler ChatMessageHandler) (*Ch
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(opts.Message),
+						Value: tea.String(message),
 					},
 				},
 			},
@@ -98,7 +101,7 @@ func (c *Client) SendMessage(opts *ChatOptions, handler ChatMessageHandler) (*Ch
 						}
 					}
 				}
-				return nil, fmt.Errorf(errorMsg)
+				return nil, fmt.Errorf("%s", errorMsg)
 			}
 
 			// 处理响应

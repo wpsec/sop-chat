@@ -151,11 +151,8 @@ func (s *Scheduler) runTask(task config.ScheduledTaskConfig) {
 	taskRegion := task.Region
 	taskCloudAccountID := config.NormalizeCloudAccountID(task.CloudAccountID)
 
-	prompt := task.Prompt
-	if task.ConciseReply {
-		prompt += "\n\n简化最终输出 适合聊天工具上阅读"
-	}
-	promptLog := promptForLog(prompt, 1200)
+	prompt := config.ApplyReplyStyleInstruction(task.Prompt, task.ConciseReply, taskProduct)
+	promptLog := promptForLog(task.Prompt, 1200)
 
 	log.Printf("[Scheduler] ========== 任务触发 ==========")
 	log.Printf("[Scheduler] 任务名称: %q product=%q（配置中 product=%q）", task.Name, taskProduct, task.Product)

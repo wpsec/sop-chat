@@ -170,17 +170,48 @@ func TestApplyReplyStyleInstruction(t *testing.T) {
 	if full == "请分析今天的告警" {
 		t.Fatalf("expected full SOP instruction to be appended for sls when conciseReply=false")
 	}
+	if !strings.Contains(full, "当前没有足够依据确认") {
+		t.Fatalf("expected anti-hallucination instruction to be appended, got %q", full)
+	}
 	if !strings.Contains(full, "SOP") {
 		t.Fatalf("expected SOP guidance in full reply instruction, got %q", full)
+	}
+	if !strings.Contains(full, "结论 / 依据 / 不确定项 / 下一步建议") {
+		t.Fatalf("expected high-risk structured instruction, got %q", full)
 	}
 
 	concise := ApplyReplyStyleInstruction("请分析今天的告警", true, "sls")
 	if !strings.Contains(concise, "简洁") {
 		t.Fatalf("expected concise instruction to be appended, got %q", concise)
 	}
+	if !strings.Contains(concise, "结论 / 依据 / 不确定项 / 下一步建议") {
+		t.Fatalf("expected concise high-risk instruction to be appended, got %q", concise)
+	}
 
 	cms := ApplyReplyStyleInstruction("请分析今天的告警", false, "cms")
-	if cms != "请分析今天的告警" {
-		t.Fatalf("expected cms non-concise message to remain unchanged, got %q", cms)
+	if cms == "请分析今天的告警" {
+		t.Fatalf("expected cms non-concise message to include anti-hallucination instruction, got %q", cms)
+	}
+}
+
+func TestApplyReplyStyleInstructionDoesNotForceHighRiskStructureForLowRiskMessage(t *testing.T) {
+	got := ApplyReplyStyleInstruction("帮我润色这段日报", false, "cms")
+	if strings.Contains(got, "结论 / 依据 / 不确定项 / 下一步建议") {
+		t.Fatalf("expected low-risk message not to include high-risk structure, got %q", got)
+	}
+	if !strings.Contains(got, "当前没有足够依据确认") {
+		t.Fatalf("expected low-risk message to still include baseline anti-hallucination instruction, got %q", got)
+	}
+}
+
+func TestIsHighRiskQuestion(t *testing.T) {
+	if !IsHighRiskQuestion("请检查这个用户是否有 admin 权限") {
+		t.Fatalf("expected permission question to be high risk")
+	}
+	if !IsHighRiskQuestion("这个生产告警是不是配置变更导致的") {
+		t.Fatalf("expected production incident question to be high risk")
+	}
+	if IsHighRiskQuestion("帮我把这句欢迎语改得更口语化一点") {
+		t.Fatalf("expected rewriting question not to be high risk")
 	}
 }

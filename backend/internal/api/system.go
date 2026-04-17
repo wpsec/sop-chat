@@ -61,7 +61,7 @@ func (s *Server) handleGetSystemConfig(c *gin.Context) {
 }
 
 // handleGetSetupStatus 返回系统是否已完成初始化配置（公开接口，无需认证）
-// configured=false 表示尚未填写凭据、尚未配置认证方式或尚未创建用户，引导用户前往配置 UI
+// configured 表示“业务运行配置”是否完整；loginReady 表示“登录入口”是否已经可用。
 func (s *Server) handleGetSetupStatus(c *gin.Context) {
 	s.mu.RLock()
 	cfg := s.config
@@ -84,9 +84,11 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 
 	// 检查是否存在至少一个用户账号
 	usersConfigured := false
+	builtinUserCount := 0
 	if userStore != nil {
 		if users, err := userStore.ListUsers(); err == nil && len(users) > 0 {
 			usersConfigured = true
+			builtinUserCount = len(users)
 		}
 	}
 
@@ -102,19 +104,25 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 	}
 
 	oidcConfigured := false
+	builtinStorage := "yaml"
 	if globalCfg != nil {
 		oidcConfigured = isOIDCConfigUsable(globalCfg.Auth.OIDC)
+		builtinStorage = globalCfg.BuiltinStorage()
 	}
 
 	builtinAvailable := builtinEnabled && usersConfigured
 	oidcAvailable := oidcEnabled && oidcConfigured
 	loginAvailable := builtinAvailable || oidcAvailable
+	loginReady := authConfigured && loginAvailable
 
 	c.JSON(http.StatusOK, gin.H{
 		"configured":       credConfigured && authConfigured && loginAvailable,
+		"loginReady":       loginReady,
 		"credConfigured":   credConfigured,
 		"authConfigured":   authConfigured,
 		"usersConfigured":  usersConfigured,
+		"builtinUserCount": builtinUserCount,
+		"builtinStorage":   builtinStorage,
 		"methods":          authModesToStrings(authModes),
 		"builtinEnabled":   builtinEnabled,
 		"builtinAvailable": builtinAvailable,

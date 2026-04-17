@@ -85,6 +85,44 @@
   line-height: 1.6;
 }
 
+.login-warning {
+  background: rgba(217, 119, 6, 0.1);
+  color: #92400e;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  border: 1px solid rgba(217, 119, 6, 0.18);
+  line-height: 1.6;
+}
+
+.login-method-switch {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 6px;
+  border-radius: 16px;
+  background: rgba(241, 245, 249, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.login-method-chip {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: transparent;
+  color: #526173;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.login-method-chip.active {
+  background: #ffffff;
+  color: #18212f;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
 .login-button {
   padding: 14px;
   background: linear-gradient(135deg, #1d4ed8 0%, #0f766e 100%);

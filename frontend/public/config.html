@@ -356,7 +356,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <div id="users-list" style="display:flex;flex-direction:column;gap:8px"></div>
     <input type="file" id="builtin-users-import-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleBuiltinUsersImportChange(event)">
     <div id="builtin-import-feedback" class="reload-note" style="display:none;margin-top:10px"></div>
-    <p style="font-size:12px;color:var(--text3);margin-top:10px">密码在保存时自动按 <code>MD5(passwordSalt + 明文密码)</code> 计算哈希；已有用户密码留空即可保持不变。</p>
+    <p style="font-size:12px;color:var(--text3);margin-top:10px">密码在保存时自动按 <code>MD5(passwordSalt + 明文密码)</code> 计算哈希；已有用户不会回显历史密码或哈希，密码留空即可保持不变。</p>
     <p style="font-size:12px;color:var(--text3);margin-top:8px">导入模板固定使用 <code>users</code> sheet，列为 <code>username</code>、<code>initial_password</code>、<code>roles</code>。导入接口会在服务端按当前 <code>passwordSalt</code> 计算哈希，不回显明文密码；当存储方式为 <code>sqlite</code> 时会直接写入本地数据库。</p>
   </div>
   <div class="card">
@@ -1159,21 +1159,21 @@ function renderUsers(users) {
   const container = document.getElementById('users-list');
   container.innerHTML = '';
   (users || []).forEach((u, i) => {
-    container.appendChild(makeUserRow(u.name, u.password, i));
+    container.appendChild(makeUserRow(u.name, !!u.hasPassword, u.originalName || u.name, i));
   });
 }
 
-function makeUserRow(name, hash, idx) {
+function makeUserRow(name, hasPassword, originalName, idx) {
   const div = document.createElement('div');
   div.className = 'list-row user-row';
   div.dataset.idx = idx;
-  const hasPassword = !!hash;
   div.innerHTML =
     '<div class="name-field">' +
       '<input type="text" placeholder="用户名" value="' + esc(name) + '" data-field="username" style="width:100%">' +
     '</div>' +
-    '<input type="hidden" data-field="hash" value="' + esc(hash) + '">' +
-    '<div class="hash-display" title="' + esc(hasPassword ? ('当前密码哈希: ' + hash) : '新建用户需设置密码') + '">' + (hasPassword ? '已设置密码' : '未设置密码') + '</div>' +
+    '<input type="hidden" data-field="original-name" value="' + esc(originalName || '') + '">' +
+    '<input type="hidden" data-field="has-password" value="' + (hasPassword ? 'true' : 'false') + '">' +
+    '<div class="hash-display" title="' + esc(hasPassword ? '当前已设置密码' : '新建用户需设置密码') + '">' + (hasPassword ? '已设置密码' : '未设置密码') + '</div>' +
     '<div class="pwd-change">' +
       '<div class="input-wrap" style="min-width:220px;flex:1">' +
         '<input type="password" placeholder="' + esc(hasPassword ? '新密码（留空保持不变）' : '初始密码（明文）') + '" data-field="newpwd" autocomplete="new-password" style="width:100%">' +
@@ -1190,7 +1190,7 @@ function makeUserRow(name, hash, idx) {
 
 function addUser() {
   const container = document.getElementById('users-list');
-  container.appendChild(makeUserRow('', '', container.children.length));
+  container.appendChild(makeUserRow('', false, '', container.children.length));
 }
 
 function removeUser(btn) {
@@ -1205,8 +1205,10 @@ function collectUsers() {
     password: (() => {
       const nextPassword = row.querySelector('[data-field=newpwd]').value.trim();
       if (nextPassword) return md5(salt + nextPassword);
-      return row.querySelector('[data-field=hash]').value.trim();
+      return '';
     })(),
+    originalName: row.querySelector('[data-field=original-name]').value.trim(),
+    hasPassword: row.querySelector('[data-field=has-password]').value === 'true',
   })).filter(u => u.name);
 }
 
@@ -1290,6 +1292,12 @@ async function handleBuiltinUsersImportChange(event) {
       feedbackLines.push('新增用户：' + (data.report.createdUsers || 0));
       feedbackLines.push('更新用户：' + (data.report.updatedUsers || 0));
       feedbackLines.push('新增角色：' + (data.report.createdRoles || 0));
+    }
+    if (data.storage) {
+      feedbackLines.push('写入介质：' + data.storage.toUpperCase());
+    }
+    if (data.storagePath) {
+      feedbackLines.push('写入位置：' + data.storagePath);
     }
     if (data.warningMessage) {
       feedbackLines.push('提示：' + data.warningMessage);
@@ -3019,7 +3027,7 @@ async function saveConfig() {
 
   const userRows = Array.from(document.querySelectorAll('#users-list .user-row')).map(row => ({
     name: row.querySelector('[data-field=username]').value.trim(),
-    hash: row.querySelector('[data-field=hash]').value.trim(),
+    hasPassword: row.querySelector('[data-field=has-password]').value === 'true',
     newpwd: row.querySelector('[data-field=newpwd]').value.trim(),
   })).filter(user => user.name);
   const duplicateUsers = new Set();
@@ -3038,9 +3046,22 @@ async function saveConfig() {
     return;
   }
 
-  const userWithoutPassword = userRows.find(user => !user.hash && !user.newpwd);
+  const userWithoutPassword = userRows.find(user => !user.hasPassword && !user.newpwd);
   if (userWithoutPassword) {
     showStatus('warning', '警告：用户 ' + userWithoutPassword.name + ' 还没有设置密码，请先填写明文密码后再保存');
+    switchTab('auth');
+    return;
+  }
+
+  const originalSalt = (((currentData || {}).auth || {}).passwordSalt || '').trim();
+  const nextSalt = val('a-salt');
+  const affectedUsers = userRows.filter(user => user.hasPassword && !user.newpwd);
+  if (originalSalt && nextSalt && originalSalt !== nextSalt && affectedUsers.length > 0) {
+    showStatus(
+      'warning',
+      '警告：你修改了 passwordSalt，但仍有 ' + affectedUsers.length + ' 个已有本地用户未重设密码；保存后这些账号将无法继续登录',
+      { label: '仍要保存', fn: 'doSave' }
+    );
     switchTab('auth');
     return;
   }

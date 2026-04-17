@@ -29,6 +29,24 @@ const getToolStatusMeta = (call) => {
   return { label: '处理中', tone: 'neutral' };
 };
 
+const detectAnswerSignals = (text = '') => {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    return {
+      evidenceInsufficient: false,
+      hasEvidenceMarkers: false,
+    };
+  }
+
+  const evidenceInsufficient = /(依据不足|没有足够依据|未找到足够依据|无法确认|不能确认|无法判断|需要补充信息|需补充信息)/i.test(normalized);
+  const hasEvidenceMarkers = /(^|\n)\s{0,3}(#{1,4}\s*)?(依据|证据|来源|不确定项|下一步建议|结论)\s*[:：]/im.test(normalized);
+
+  return {
+    evidenceInsufficient,
+    hasEvidenceMarkers,
+  };
+};
+
 const Message = ({ 
   role, 
   content, 
@@ -579,6 +597,7 @@ const Message = ({
   };
   
   const processedEvents = !isUser ? processEvents(events) : [];
+  const answerSignals = !isUser ? detectAnswerSignals(getAnswerText()) : null;
   
   // Get assistant display name
   const assistantDisplayName = assistantName || 'SLS 助手';
@@ -586,7 +605,13 @@ const Message = ({
   return (
     <div className={`message ${isUser ? 'user-message' : 'assistant-message'} ${isStreaming ? 'streaming' : ''}`}>
       <div className="message-header">
-        {isUser ? '您' : assistantDisplayName}
+        <span>{isUser ? '您' : assistantDisplayName}</span>
+        {!isUser && answerSignals?.evidenceInsufficient && (
+          <span className="guardrail-badge guardrail-badge-warning">依据不足</span>
+        )}
+        {!isUser && !answerSignals?.evidenceInsufficient && answerSignals?.hasEvidenceMarkers && (
+          <span className="guardrail-badge guardrail-badge-positive">含依据</span>
+        )}
         {isStreaming && <span className="streaming-indicator">▊</span>}
       </div>
       
@@ -774,6 +799,12 @@ const Message = ({
             }
             return null;
           })}
+
+          {!isStreaming && answerSignals?.evidenceInsufficient && (
+            <div className="guardrail-note">
+              当前回答明确表示依据不足，使用前建议补充环境、时间范围、数据源或对象标识。
+            </div>
+          )}
           
           {/* Stage indicator during streaming */}
           {isStreaming && stage && processedEvents.length > 0 && (

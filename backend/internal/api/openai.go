@@ -364,6 +364,7 @@ func (s *Server) buildChatRequest(employeeName, threadID, message string, ctx co
 		timeZone = s.globalConfig.GetTimeZone()
 		language = s.globalConfig.GetLanguage()
 	}
+	guardedMessage := config.ApplyReplyStyleInstruction(message, false, ctx.Product)
 
 	return &cmsclient.CreateChatRequest{
 		DigitalEmployeeName: tea.String(employeeName),
@@ -375,7 +376,7 @@ func (s *Server) buildChatRequest(employeeName, threadID, message string, ctx co
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(message),
+						Value: tea.String(guardedMessage),
 					},
 				},
 			},

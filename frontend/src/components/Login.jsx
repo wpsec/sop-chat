@@ -7,6 +7,8 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import './Login.css';
 
+const LOGIN_MODE_PREFERENCE_KEY = 'preferred_login_mode';
+
 function Login() {
   const { t } = useTranslation();
   const [username, setUsername] = useState('');
@@ -15,6 +17,7 @@ function Login() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [setupStatus, setSetupStatus] = useState(null);
+  const [selectedMode, setSelectedMode] = useState('builtin');
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -39,6 +42,22 @@ function Login() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!setupStatus) return;
+    const availableModes = [];
+    if (setupStatus.builtinAvailable) availableModes.push('builtin');
+    if (setupStatus.oidcAvailable) availableModes.push('oidc');
+    if (availableModes.length === 0) return;
+
+    const preferredMode = window.localStorage.getItem(LOGIN_MODE_PREFERENCE_KEY);
+    if (preferredMode && availableModes.includes(preferredMode)) {
+      setSelectedMode(preferredMode);
+      return;
+    }
+
+    setSelectedMode(availableModes.includes('oidc') ? 'oidc' : availableModes[0]);
+  }, [setupStatus]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -61,20 +80,32 @@ function Login() {
     window.location.assign('/api/auth/oidc/login');
   };
 
+  const switchLoginMode = (mode) => {
+    setSelectedMode(mode);
+    window.localStorage.setItem(LOGIN_MODE_PREFERENCE_KEY, mode);
+  };
+
   // 状态尚未加载完成时渲染空白，避免登录表单闪烁后被替换
   if (setupStatus === null) {
     return <div className="login-container" />;
   }
 
-  const notConfigured = !setupStatus.configured;
   const hasBuiltinLogin = !!setupStatus.builtinAvailable;
   const hasOIDCLogin = !!setupStatus.oidcAvailable;
+  const loginReady = !!setupStatus.loginReady || (setupStatus.authConfigured && (hasBuiltinLogin || hasOIDCLogin));
+  const notConfigured = !loginReady;
+  const activeMode = hasBuiltinLogin && hasOIDCLogin
+    ? selectedMode
+    : (hasOIDCLogin ? 'oidc' : 'builtin');
 
   if (notConfigured) {
     const reasons = [];
-    if (!setupStatus.credConfigured) reasons.push('阿里云 AccessKey 未填写');
     if (!setupStatus.authConfigured) reasons.push('登录认证方式（auth.methods）未配置');
-    if (setupStatus.builtinEnabled && !setupStatus.usersConfigured) reasons.push('内置账号已启用，但尚未创建任何登录用户');
+    if (setupStatus.builtinEnabled && !setupStatus.usersConfigured) {
+      reasons.push(setupStatus.builtinStorage === 'sqlite'
+        ? '本地账号登录已启用，但 SQLite 用户库中还没有可登录用户'
+        : '本地账号登录已启用，但尚未创建任何登录用户');
+    }
     if (setupStatus.oidcEnabled && !setupStatus.oidcAvailable) reasons.push('OIDC / IDaaS 已启用，但 issuerURL、clientId 或 clientSecret 尚未完成配置');
     if (setupStatus.authConfigured && !hasBuiltinLogin && !hasOIDCLogin) reasons.push('当前没有可用的登录入口');
 
@@ -104,8 +135,32 @@ function Login() {
         <div className="login-form">
           {message && <div className="info-message">{message}</div>}
           {error && <div className="error-message">{error}</div>}
+          {!setupStatus.credConfigured && (
+            <div className="login-warning">
+              云账号凭据尚未配置，登录后与阿里云相关的业务能力可能仍不可用。
+            </div>
+          )}
 
-          {hasBuiltinLogin && (
+          {hasBuiltinLogin && hasOIDCLogin && (
+            <div className="login-method-switch" role="tablist" aria-label="登录方式切换">
+              <button
+                type="button"
+                className={`login-method-chip${selectedMode === 'oidc' ? ' active' : ''}`}
+                onClick={() => switchLoginMode('oidc')}
+              >
+                IDaaS 单点登录
+              </button>
+              <button
+                type="button"
+                className={`login-method-chip${selectedMode === 'builtin' ? ' active' : ''}`}
+                onClick={() => switchLoginMode('builtin')}
+              >
+                本地账号登录
+              </button>
+            </div>
+          )}
+
+          {hasBuiltinLogin && activeMode === 'builtin' && (
             <form onSubmit={handleSubmit} className="login-form">
               <div className="form-group">
                 <label htmlFor="username">{t('login.username')}</label>
@@ -138,13 +193,7 @@ function Login() {
             </form>
           )}
 
-          {hasBuiltinLogin && hasOIDCLogin && (
-            <div className="login-divider">
-              <span>或</span>
-            </div>
-          )}
-
-          {hasOIDCLogin && (
+          {hasOIDCLogin && activeMode === 'oidc' && (
             <div className="login-oidc-block">
               <button type="button" className="login-button login-button-secondary" onClick={handleOIDCLogin}>
                 使用 IDaaS 登录

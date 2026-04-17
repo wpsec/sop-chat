@@ -434,6 +434,12 @@ const (
 	ConciseReplyInstruction = "\n\n（请用简洁的纯文本回答，避免复杂排版，适合在 IM 中直接阅读，控制在几句话以内。尽量拟人的语气，少用 markdown。）"
 	// StandardSOPReplyInstruction 在关闭简洁模式且对接 SLS/SOP 员工时，提示模型按完整 SOP 规范作答。
 	StandardSOPReplyInstruction = "\n\n（请严格按照 SOP 文档和标准流程完整回答，不要为了适应 IM 而省略关键判断、排查步骤、影响面、结论和建议；如果有既定模板或报告格式，请尽量按模板完整输出。）"
+	// AntiHallucinationBaselineInstruction 为所有入口附加的基础防幻觉约束。
+	AntiHallucinationBaselineInstruction = "\n\n（回答约束：只基于当前问题、上下文、已授权数据源返回、SOP 文档和工具结果作答；不要编造用户、角色、权限、资源名称、时间、错误码、配置字段、接口返回或执行结果；如果无法确认，请明确写“当前没有足够依据确认”或“需要补充信息”；不要把推测当成事实。）"
+	// HighRiskStructuredReplyInstruction 要求高风险问题使用更保守、更易审阅的结构回答。
+	HighRiskStructuredReplyInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，请优先按“结论 / 依据 / 不确定项 / 下一步建议”回答；没有依据时先说明不能确认，再给排查建议。）"
+	// HighRiskStructuredConciseInstruction 是高风险场景下的简洁结构化回答要求。
+	HighRiskStructuredConciseInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，即使简洁回复也要尽量保留“结论 / 依据 / 不确定项 / 下一步建议”四项，每项一句话即可。）"
 )
 
 // NormalizeProduct 将 product 规范为 cms 或 sls（大小写与空白容错）。
@@ -486,6 +492,19 @@ func MergeProductContext(base ProductContext, product, project, workspace, regio
 
 // ApplyReplyStyleInstruction 根据 conciseReply 和产品类型附加消息风格提示。
 func ApplyReplyStyleInstruction(message string, conciseReply bool, product string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return ""
+	}
+
+	message = trimmed + AntiHallucinationBaselineInstruction
+	if IsHighRiskQuestion(trimmed) {
+		if conciseReply {
+			message += HighRiskStructuredConciseInstruction
+		} else {
+			message += HighRiskStructuredReplyInstruction
+		}
+	}
 	if conciseReply {
 		return message + ConciseReplyInstruction
 	}
@@ -493,6 +512,28 @@ func ApplyReplyStyleInstruction(message string, conciseReply bool, product strin
 		return message + StandardSOPReplyInstruction
 	}
 	return message
+}
+
+// IsHighRiskQuestion 判断问题是否属于高风险问答，需要更保守的结构化回答。
+func IsHighRiskQuestion(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+
+	keywords := []string{
+		"权限", "角色", "用户", "鉴权", "认证", "未授权", "oidc", "idaas", "登录", "回调",
+		"配置", "配置项", "开关", "参数", "yaml", "sqlite", "secret", "token", "ak", "sk",
+		"生产", "线上", "审计", "安全", "root cause", "根因", "故障", "排障", "告警",
+		"资源", "实例", "pod", "deployment", "集群", "错误码", "回滚", "变更", "删除",
+		"恢复", "修复", "操作", "日志", "巡检", "合规",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // AuthConfig 认证配置

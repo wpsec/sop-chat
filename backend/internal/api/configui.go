@@ -151,8 +151,10 @@ type configUILocal struct {
 }
 
 type configUIUser struct {
-	Name     string `json:"name"`
-	Password string `json:"password"` // MD5 哈希值
+	Name         string `json:"name"`
+	Password     string `json:"password,omitempty"`     // 仅用于提交时传入新的 MD5 哈希值
+	OriginalName string `json:"originalName,omitempty"` // 用于重命名时保留原密码
+	HasPassword  bool   `json:"hasPassword,omitempty"`  // 仅用于前端展示“已设置密码”
 }
 
 type configUIRole struct {
@@ -356,7 +358,11 @@ func loadBuiltinLocalForUI(cfg *config.Config, configPath string) (*configUILoca
 			Roles: make([]configUIRole, len(cfg.Auth.Roles)),
 		}
 		for i, u := range cfg.Auth.BuiltinUsers {
-			local.Users[i] = configUIUser{Name: u.Name, Password: u.Password}
+			local.Users[i] = configUIUser{
+				Name:         u.Name,
+				OriginalName: u.Name,
+				HasPassword:  strings.TrimSpace(u.Password) != "",
+			}
 		}
 		for i, r := range cfg.Auth.Roles {
 			users := r.Users
@@ -389,8 +395,9 @@ func loadBuiltinLocalForUI(cfg *config.Config, configPath string) (*configUILoca
 	}
 	for _, user := range users {
 		local.Users = append(local.Users, configUIUser{
-			Name:     user.Username,
-			Password: user.PasswordHash,
+			Name:         user.Username,
+			OriginalName: user.Username,
+			HasPassword:  strings.TrimSpace(user.PasswordHash) != "",
 		})
 	}
 	for _, role := range roles {
@@ -400,6 +407,57 @@ func loadBuiltinLocalForUI(cfg *config.Config, configPath string) (*configUILoca
 		})
 	}
 	return local, nil
+}
+
+func findExistingConfigUser(existing map[string]config.UserConfig, user configUIUser) *config.UserConfig {
+	candidates := []string{
+		strings.TrimSpace(user.OriginalName),
+		strings.TrimSpace(user.Name),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if stored, ok := existing[candidate]; ok {
+			copy := stored
+			return &copy
+		}
+	}
+	return nil
+}
+
+func mergeBuiltinUsersFromUI(existing *config.Config, local *configUILocal) []config.UserConfig {
+	if local == nil {
+		return nil
+	}
+
+	existingUsers := make(map[string]config.UserConfig)
+	if existing != nil {
+		for _, user := range existing.Auth.BuiltinUsers {
+			existingUsers[strings.TrimSpace(user.Name)] = user
+		}
+	}
+
+	result := make([]config.UserConfig, 0, len(local.Users))
+	for _, user := range local.Users {
+		name := strings.TrimSpace(user.Name)
+		if name == "" {
+			continue
+		}
+
+		password := strings.TrimSpace(user.Password)
+		if password == "" {
+			if preserved := findExistingConfigUser(existingUsers, user); preserved != nil {
+				password = preserved.Password
+			}
+		}
+
+		result = append(result, config.UserConfig{
+			Name:     name,
+			Password: password,
+		})
+	}
+	return result
 }
 
 func syncBuiltinSQLiteFromUILocal(cfg *config.Config, configPath string, local *configUILocal) error {
@@ -412,6 +470,15 @@ func syncBuiltinSQLiteFromUILocal(cfg *config.Config, configPath string, local *
 		return err
 	}
 	defer store.Close()
+
+	existingUsers := make(map[string]*auth.StoredUser)
+	if storedUsers, err := store.ListUsers(); err == nil {
+		for _, user := range storedUsers {
+			existingUsers[strings.TrimSpace(user.Username)] = user
+		}
+	} else {
+		return err
+	}
 
 	users := make([]*auth.StoredUser, 0, len(local.Users))
 	storedRoles := make([]*auth.StoredRole, 0, len(local.Roles))
@@ -434,6 +501,21 @@ func syncBuiltinSQLiteFromUILocal(cfg *config.Config, configPath string, local *
 		if strings.TrimSpace(user.Name) == "" {
 			continue
 		}
+		passwordHash := strings.TrimSpace(user.Password)
+		existingUser := func() *auth.StoredUser {
+			for _, candidate := range []string{strings.TrimSpace(user.OriginalName), strings.TrimSpace(user.Name)} {
+				if candidate == "" {
+					continue
+				}
+				if stored, ok := existingUsers[candidate]; ok {
+					return stored
+				}
+			}
+			return nil
+		}()
+		if passwordHash == "" && existingUser != nil {
+			passwordHash = existingUser.PasswordHash
+		}
 		roles := make([]string, 0)
 		for _, role := range local.Roles {
 			if strings.TrimSpace(role.Name) == "" {
@@ -448,11 +530,21 @@ func syncBuiltinSQLiteFromUILocal(cfg *config.Config, configPath string, local *
 		}
 		users = append(users, &auth.StoredUser{
 			Username:     user.Name,
-			PasswordHash: user.Password,
-			Email:        fmt.Sprintf("%s@localhost", user.Name),
-			Roles:        roles,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			PasswordHash: passwordHash,
+			Email: func() string {
+				if existingUser != nil && strings.TrimSpace(existingUser.Email) != "" {
+					return existingUser.Email
+				}
+				return fmt.Sprintf("%s@localhost", user.Name)
+			}(),
+			Roles: roles,
+			CreatedAt: func() string {
+				if existingUser != nil && strings.TrimSpace(existingUser.CreatedAt) != "" {
+					return existingUser.CreatedAt
+				}
+				return now
+			}(),
+			UpdatedAt: now,
 		})
 	}
 
@@ -575,11 +667,8 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 			}
 		}
 		if req.Auth.Local != nil && cfg.BuiltinStorage() == "yaml" {
-			cfg.Auth.BuiltinUsers = make([]config.UserConfig, len(req.Auth.Local.Users))
+			cfg.Auth.BuiltinUsers = mergeBuiltinUsersFromUI(existing, req.Auth.Local)
 			cfg.Auth.Roles = make([]config.RoleConfig, len(req.Auth.Local.Roles))
-			for i, u := range req.Auth.Local.Users {
-				cfg.Auth.BuiltinUsers[i] = config.UserConfig{Name: u.Name, Password: u.Password}
-			}
 			for i, r := range req.Auth.Local.Roles {
 				cfg.Auth.Roles[i] = config.RoleConfig{Name: r.Name, Users: r.Users}
 			}
@@ -1241,11 +1330,8 @@ func (s *Server) handleTriggerTask(c *gin.Context) {
 	taskProject := req.Project
 	taskWorkspace := req.Workspace
 	taskRegion := req.Region
-	fullPrompt := req.Prompt
-	if req.ConciseReply {
-		fullPrompt += "\n\n简化最终输出 适合聊天工具上阅读"
-	}
-	promptLog := scheduler.PromptForLog(fullPrompt, 1200)
+	fullPrompt := config.ApplyReplyStyleInstruction(req.Prompt, req.ConciseReply, taskProduct)
+	promptLog := scheduler.PromptForLog(req.Prompt, 1200)
 	log.Printf("[trigger-task] task=%q cloudAccountId=%q 使用 product=%q 问题=%s（原始 product=%q 全局=%q workspace=%q project=%q）",
 		req.Name, clientCfg.CloudAccountID, taskProduct, promptLog, req.Product, clientCfg.Product, req.Workspace, req.Project)
 
@@ -1256,11 +1342,7 @@ func (s *Server) handleTriggerTask(c *gin.Context) {
 	done := make(chan triggerResult, 1)
 
 	go func() {
-		prompt := req.Prompt
-		if req.ConciseReply {
-			prompt += "\n\n简化最终输出 适合聊天工具上阅读"
-		}
-		reply, err := scheduler.QueryEmployeeWithVariables(clientCfg, req.EmployeeName, prompt, taskProduct, taskProject, taskWorkspace, taskRegion)
+		reply, err := scheduler.QueryEmployeeWithVariables(clientCfg, req.EmployeeName, fullPrompt, taskProduct, taskProject, taskWorkspace, taskRegion)
 		done <- triggerResult{reply: reply, err: err}
 	}()
 

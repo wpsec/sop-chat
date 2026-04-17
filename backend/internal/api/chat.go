@@ -12,6 +12,7 @@ import (
 	"github.com/alibabacloud-go/tea/tea"
 	"github.com/gin-gonic/gin"
 
+	"sop-chat/internal/config"
 	"sop-chat/pkg/sopchat"
 )
 
@@ -91,6 +92,7 @@ func (s *Server) handleChatStream(c *gin.Context) {
 	}
 
 	variables := buildEmployeeChatVariables(timeZone, language, runtimeCfg.Context)
+	guardedMessage := config.ApplyReplyStyleInstruction(req.Message, false, runtimeCfg.Context.Product)
 
 	// 创建聊天请求
 	request := &cmsclient.CreateChatRequest{
@@ -103,7 +105,7 @@ func (s *Server) handleChatStream(c *gin.Context) {
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(req.Message),
+						Value: tea.String(guardedMessage),
 					},
 				},
 			},

@@ -124,9 +124,10 @@ func (s *Server) handleImportBuiltinUsers(c *gin.Context) {
 		}
 
 		resp := gin.H{
-			"message": buildBuiltinUsersImportMessage(report),
-			"report":  report,
-			"storage": "sqlite",
+			"message":     buildBuiltinUsersImportMessage(report),
+			"report":      report,
+			"storage":     "sqlite",
+			"storagePath": store.Path(),
 		}
 		if warning != "" {
 			resp["warning"] = true
@@ -176,8 +177,10 @@ func (s *Server) handleImportBuiltinUsers(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"message": buildBuiltinUsersImportMessage(report),
-		"report":  report,
+		"message":     buildBuiltinUsersImportMessage(report),
+		"report":      report,
+		"storage":     "yaml",
+		"storagePath": configPath,
 	}
 	if warning != "" {
 		resp["warning"] = true

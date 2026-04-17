@@ -1,8 +1,10 @@
 package api
 
 import (
+	"path/filepath"
 	"testing"
 
+	"sop-chat/internal/auth"
 	"sop-chat/internal/config"
 )
 
@@ -194,5 +196,102 @@ func TestBuildConfigFromUIClearsChannelWhenFieldPresentEmpty(t *testing.T) {
 
 	if cfg.Channels != nil {
 		t.Fatalf("expected empty dingtalk section to clear channels, got %+v", cfg.Channels)
+	}
+}
+
+func TestBuildConfigFromUIPreservesBuiltinPasswordWhenRenamingUser(t *testing.T) {
+	existing := &config.Config{
+		Auth: config.AuthConfig{
+			Methods:      []string{"builtin"},
+			PasswordSalt: "salt-123",
+			BuiltinUsers: []config.UserConfig{{Name: "legacy-admin", Password: "old-hash"}},
+			Roles:        []config.RoleConfig{{Name: "admin", Users: []string{"legacy-admin"}}},
+		},
+	}
+
+	cfg, err := buildConfigFromUI(existing, configUIResponse{
+		Auth: configUIAuth{
+			Methods:      []string{"builtin"},
+			JWTSecretKey: "secret",
+			JWTExpiresIn: "24h",
+			PasswordSalt: "salt-123",
+			Local: &configUILocal{
+				Users: []configUIUser{
+					{
+						Name:         "sqlite-admin",
+						OriginalName: "legacy-admin",
+						HasPassword:  true,
+					},
+				},
+				Roles: []configUIRole{{Name: "admin", Users: []string{"sqlite-admin"}}},
+			},
+		},
+	}, configUIFieldPresence{Auth: true})
+	if err != nil {
+		t.Fatalf("buildConfigFromUI returned error: %v", err)
+	}
+
+	if len(cfg.Auth.BuiltinUsers) != 1 {
+		t.Fatalf("expected one builtin user, got %+v", cfg.Auth.BuiltinUsers)
+	}
+	if cfg.Auth.BuiltinUsers[0].Name != "sqlite-admin" || cfg.Auth.BuiltinUsers[0].Password != "old-hash" {
+		t.Fatalf("expected renamed user to preserve old hash, got %+v", cfg.Auth.BuiltinUsers[0])
+	}
+}
+
+func TestSyncBuiltinSQLiteFromUILocalPreservesPasswordHashOnRename(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.DefaultConfig()
+	cfg.Auth.Builtin = &config.BuiltinAuthConfig{
+		Storage:    "sqlite",
+		SQLitePath: "data/builtin-users.db",
+	}
+
+	store, err := auth.NewSQLiteUserStore(filepath.Join(filepath.Dir(configPath), "data", "builtin-users.db"), cfg.Auth.PasswordSalt)
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.ReplaceAll([]*auth.StoredUser{
+		{
+			Username:     "legacy-admin",
+			PasswordHash: "old-hash",
+			Email:        "legacy-admin@localhost",
+			Roles:        []string{"admin"},
+			CreatedAt:    "2026-04-17T10:00:00Z",
+			UpdatedAt:    "2026-04-17T10:00:00Z",
+		},
+	}, []*auth.StoredRole{
+		{
+			Name:      "admin",
+			Users:     []string{"legacy-admin"},
+			CreatedAt: "2026-04-17T10:00:00Z",
+			UpdatedAt: "2026-04-17T10:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("failed to seed sqlite builtin data: %v", err)
+	}
+
+	err = syncBuiltinSQLiteFromUILocal(cfg, configPath, &configUILocal{
+		Users: []configUIUser{
+			{
+				Name:         "sqlite-admin",
+				OriginalName: "legacy-admin",
+				HasPassword:  true,
+			},
+		},
+		Roles: []configUIRole{{Name: "admin", Users: []string{"sqlite-admin"}}},
+	})
+	if err != nil {
+		t.Fatalf("syncBuiltinSQLiteFromUILocal returned error: %v", err)
+	}
+
+	renamed, err := store.GetUser("sqlite-admin")
+	if err != nil {
+		t.Fatalf("expected renamed user to exist: %v", err)
+	}
+	if renamed.PasswordHash != "old-hash" {
+		t.Fatalf("expected preserved password hash, got %+v", renamed)
 	}
 }
