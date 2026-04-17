@@ -66,6 +66,149 @@ const buildAnswerText = (content, events = []) => {
     .trim();
 };
 
+const stringifyStructuredValue = (value) => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+};
+
+const extractToolResultText = (result) => {
+  if (!result) {
+    return '';
+  }
+
+  if (typeof result === 'string') {
+    return result.trim();
+  }
+
+  if (result.error) {
+    return String(result.error).trim();
+  }
+
+  if (Array.isArray(result.contents)) {
+    return result.contents
+      .map((content) => {
+        if (typeof content === 'string') {
+          return content;
+        }
+        if (content && typeof content === 'object') {
+          if (typeof content.value === 'string') {
+            return content.value;
+          }
+          return stringifyStructuredValue(content);
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+
+  return stringifyStructuredValue(result).trim();
+};
+
+const buildDownloadMarkdown = ({
+  content,
+  processedEvents = [],
+  question,
+  assistantName,
+}) => {
+  const lines = [`# ${assistantName || 'SOP Chat'} 回答报告`, ''];
+  let hasBodyContent = false;
+
+  if (question) {
+    lines.push('## 问题', '', String(question).trim(), '');
+  }
+
+  const answerChunks = processedEvents
+    .filter((event) => event.type === 'content')
+    .map((event) => stripThinkingBlocks(event.data))
+    .filter(Boolean);
+
+  if (answerChunks.length > 0) {
+    hasBodyContent = true;
+    lines.push('## 回答', '', answerChunks.join('\n\n'), '');
+  } else {
+    const fallbackAnswer = stripThinkingBlocks(content);
+    if (fallbackAnswer) {
+      hasBodyContent = true;
+      lines.push('## 回答', '', fallbackAnswer, '');
+    }
+  }
+
+  const toolSections = processedEvents
+    .filter((event) => event.type === 'tool_call')
+    .map((event) => {
+      const call = event.data || {};
+      const sectionLines = [
+        `## 工具调用：${call.tool || 'unknown_tool'}`,
+        '',
+        `- 状态：${getToolStatusMeta(call).label}`,
+      ];
+
+      if (call.args && Object.keys(call.args).length > 0) {
+        sectionLines.push('- 参数：');
+        sectionLines.push('```json');
+        sectionLines.push(stringifyStructuredValue(call.args));
+        sectionLines.push('```');
+      }
+
+      const toolResultText = extractToolResultText(call.result);
+      if (toolResultText) {
+        sectionLines.push('');
+        sectionLines.push(call.success === false ? '### 错误输出' : '### 工具输出');
+        sectionLines.push('');
+        sectionLines.push(toolResultText);
+      }
+
+      sectionLines.push('');
+      return sectionLines.join('\n');
+    });
+
+  const errorSections = processedEvents
+    .filter((event) => event.type === 'error')
+    .map((event) => {
+      const errorData = event.data || {};
+      const sectionLines = ['## 错误信息', ''];
+      if (errorData.code) {
+        sectionLines.push(`- 错误码：${errorData.code}`);
+      }
+      if (errorData.message) {
+        sectionLines.push(`- 描述：${errorData.message}`);
+      }
+      if (errorData.suggestion) {
+        sectionLines.push(`- 建议：${errorData.suggestion}`);
+      }
+      sectionLines.push('');
+      return sectionLines.join('\n');
+    });
+
+  if (toolSections.length > 0) {
+    hasBodyContent = true;
+    lines.push(...toolSections);
+  }
+
+  if (errorSections.length > 0) {
+    hasBodyContent = true;
+    lines.push(...errorSections);
+  }
+
+  if (!hasBodyContent) {
+    return '';
+  }
+
+  const markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return markdown ? `${markdown}\n` : '';
+};
+
 const sanitizeFileNamePart = (value = '') => String(value || '')
   .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
   .replace(/\s+/g, '-')
@@ -141,9 +284,11 @@ const Message = ({
     }));
   };
   
+  const answerText = !isUser ? buildAnswerText(content, events) : '';
+
   // Get the full answer text from events (excluding <think> blocks)
   const getAnswerText = () => {
-    return buildAnswerText(content, events);
+    return answerText;
   };
 
   const resetDownloadState = () => {
@@ -159,10 +304,9 @@ const Message = ({
   };
 
   const handlePrepareDownload = () => {
-    const answerText = getAnswerText();
-    if (!answerText) return;
+    if (!canDownload) return;
 
-    downloadContentRef.current = answerText.endsWith('\n') ? answerText : `${answerText}\n`;
+    downloadContentRef.current = downloadContent;
     setDownloadFileName(buildDownloadFileName(question, assistantName));
     setShowDownloadModal(true);
     setDownloadProgress(0);
@@ -667,9 +811,18 @@ const Message = ({
       </div>
     );
   };
-  
+
   const processedEvents = !isUser ? processEvents(events) : [];
-  const answerSignals = !isUser ? detectAnswerSignals(getAnswerText()) : null;
+  const answerSignals = !isUser ? detectAnswerSignals(answerText) : null;
+  const downloadContent = !isUser
+    ? buildDownloadMarkdown({
+        content,
+        processedEvents,
+        question,
+        assistantName,
+      })
+    : '';
+  const canDownload = Boolean(downloadContent.trim());
   
   // Get assistant display name
   const assistantDisplayName = assistantName || 'SLS 助手';
@@ -895,6 +1048,7 @@ const Message = ({
                   <>
                     <button 
                       className={`feedback-btn like-btn ${feedbackStatus === 'like' ? 'active' : ''} ${feedbackStatus ? 'disabled' : ''}`}
+                      type="button"
                       onClick={handleLike}
                       disabled={!!feedbackStatus || isSubmittingFeedback}
                       title="这个回答有帮助"
@@ -903,6 +1057,7 @@ const Message = ({
                     </button>
                     <button 
                       className={`feedback-btn dislike-btn ${feedbackStatus === 'dislike' ? 'active' : ''} ${feedbackStatus ? 'disabled' : ''}`}
+                      type="button"
                       onClick={handleDislike}
                       disabled={!!feedbackStatus || isSubmittingFeedback}
                       title="这个回答需要改进"
@@ -914,7 +1069,9 @@ const Message = ({
                 {/* Always show download button when there's content */}
                 <button 
                   className="feedback-btn download-btn"
+                  type="button"
                   onClick={handlePrepareDownload}
+                  disabled={!canDownload}
                   title="下载回答内容"
                 >
                   下载
@@ -937,7 +1094,7 @@ const Message = ({
           <div className="feedback-modal" onClick={e => e.stopPropagation()}>
             <div className="feedback-modal-header">
               <h3>请告诉我们哪里需要改进</h3>
-              <button className="feedback-modal-close" onClick={handleCloseModal}>×</button>
+              <button className="feedback-modal-close" type="button" onClick={handleCloseModal}>×</button>
             </div>
             <div className="feedback-modal-body">
               <textarea
@@ -951,6 +1108,7 @@ const Message = ({
             <div className="feedback-modal-footer">
               <button 
                 className="feedback-modal-cancel" 
+                type="button"
                 onClick={handleCloseModal}
                 disabled={isSubmittingFeedback}
               >
@@ -958,6 +1116,7 @@ const Message = ({
               </button>
               <button 
                 className="feedback-modal-submit" 
+                type="button"
                 onClick={handleDislikeSubmit}
                 disabled={isSubmittingFeedback}
               >
@@ -973,7 +1132,7 @@ const Message = ({
           <div className="feedback-modal download-modal" onClick={e => e.stopPropagation()}>
             <div className="feedback-modal-header">
               <h3>准备下载报告</h3>
-              <button className="feedback-modal-close" onClick={resetDownloadState}>×</button>
+              <button className="feedback-modal-close" type="button" onClick={resetDownloadState}>×</button>
             </div>
             <div className="feedback-modal-body download-modal-body">
               <div className="download-file-name">{downloadFileName}</div>
@@ -993,12 +1152,14 @@ const Message = ({
             <div className="feedback-modal-footer">
               <button
                 className="feedback-modal-cancel"
+                type="button"
                 onClick={resetDownloadState}
               >
                 取消
               </button>
               <button
                 className="feedback-modal-submit"
+                type="button"
                 onClick={handleConfirmDownload}
                 disabled={!downloadReady}
               >

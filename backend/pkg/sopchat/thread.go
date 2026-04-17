@@ -84,11 +84,44 @@ func (c *Client) GetThread(employeeName string, threadId string) (*cmsclient.Get
 // GetThreadData 获取线程消息数据
 // 注意：employeeName 参数是必需的
 func (c *Client) GetThreadData(employeeName string, threadId string) (*cmsclient.GetThreadDataResponse, error) {
-	request := &cmsclient.GetThreadDataRequest{}
+	var (
+		result    *cmsclient.GetThreadDataResponse
+		nextToken *string
+		allData   []*cmsclient.GetThreadDataResponseBodyData
+	)
 
-	result, err := c.CmsClient.GetThreadData(tea.String(employeeName), tea.String(threadId), request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get thread data: %w", err)
+	for {
+		request := (&cmsclient.GetThreadDataRequest{}).SetMaxResults(100)
+		if nextToken != nil && tea.StringValue(nextToken) != "" {
+			request.SetNextToken(tea.StringValue(nextToken))
+		}
+
+		page, err := c.CmsClient.GetThreadData(tea.String(employeeName), tea.String(threadId), request)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get thread data: %w", err)
+		}
+
+		if result == nil {
+			result = page
+		}
+
+		if page == nil || page.Body == nil {
+			break
+		}
+
+		if len(page.Body.Data) > 0 {
+			allData = append(allData, page.Body.Data...)
+		}
+
+		nextToken = page.Body.NextToken
+		if tea.StringValue(nextToken) == "" {
+			break
+		}
+	}
+
+	if result != nil && result.Body != nil {
+		result.Body.Data = allData
+		result.Body.NextToken = nil
 	}
 
 	return result, nil
