@@ -94,6 +94,7 @@ function Login() {
   const hasOIDCLogin = !!setupStatus.oidcAvailable;
   const loginReady = !!setupStatus.loginReady || (setupStatus.authConfigured && (hasBuiltinLogin || hasOIDCLogin));
   const notConfigured = !loginReady;
+  const versionDisplay = setupStatus.versionDisplay || setupStatus.version || 'v0.3.0-beta.1';
   const activeMode = hasBuiltinLogin && hasOIDCLogin
     ? selectedMode
     : (hasOIDCLogin ? 'oidc' : 'builtin');
@@ -123,6 +124,7 @@ function Login() {
           <p className="setup-required-path">
             形如：<code>http://&lt;host&gt;:&lt;port&gt;/admin-ui?token=...</code>
           </p>
+          <div className="login-version">版本 {versionDisplay}</div>
         </div>
       </div>
     );
@@ -201,6 +203,8 @@ function Login() {
               <p className="login-hint">认证完成后会自动返回当前系统并建立会话。</p>
             </div>
           )}
+
+          <div className="login-version">版本 {versionDisplay}</div>
         </div>
       </div>
     </div>

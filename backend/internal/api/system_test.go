@@ -83,6 +83,8 @@ func TestHandleGetSetupStatusReportsLoginReadySeparately(t *testing.T) {
 		BuiltinStorage   string `json:"builtinStorage"`
 		BuiltinUserCount int    `json:"builtinUserCount"`
 		BuiltinAvailable bool   `json:"builtinAvailable"`
+		Version          string `json:"version"`
+		VersionDisplay   string `json:"versionDisplay"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -99,5 +101,11 @@ func TestHandleGetSetupStatusReportsLoginReadySeparately(t *testing.T) {
 	}
 	if !resp.BuiltinAvailable || resp.BuiltinStorage != "sqlite" || resp.BuiltinUserCount != 1 {
 		t.Fatalf("unexpected builtin status: %+v", resp)
+	}
+	if resp.Version != "v0.3.0-beta.1" {
+		t.Fatalf("expected base version to be returned, got %+v", resp)
+	}
+	if resp.VersionDisplay == "" {
+		t.Fatalf("expected version display to be returned, got %+v", resp)
 	}
 }

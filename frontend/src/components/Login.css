@@ -189,6 +189,15 @@
   text-align: center;
 }
 
+.login-version {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7b8798;
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
 .login-footer {
   margin-top: 20px;
   text-align: center;

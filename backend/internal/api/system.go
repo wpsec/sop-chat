@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"sop-chat/internal/auth"
+	appversion "sop-chat/internal/version"
 	"sop-chat/pkg/sopchat"
 
 	"github.com/gin-gonic/gin"
@@ -114,6 +115,7 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 	oidcAvailable := oidcEnabled && oidcConfigured
 	loginAvailable := builtinAvailable || oidcAvailable
 	loginReady := authConfigured && loginAvailable
+	versionInfo := appversion.Current()
 
 	c.JSON(http.StatusOK, gin.H{
 		"configured":       credConfigured && authConfigured && loginAvailable,
@@ -129,5 +131,9 @@ func (s *Server) handleGetSetupStatus(c *gin.Context) {
 		"oidcEnabled":      oidcEnabled,
 		"oidcConfigured":   oidcConfigured,
 		"oidcAvailable":    oidcAvailable,
+		"version":          versionInfo.Version,
+		"versionDisplay":   versionInfo.Display(),
+		"versionCommit":    versionInfo.ShortCommit(),
+		"versionDirty":     versionInfo.Dirty,
 	})
 }

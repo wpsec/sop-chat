@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"sop-chat/internal/api"
 	"sop-chat/internal/client"
 	"sop-chat/internal/config"
+	appversion "sop-chat/internal/version"
 
 	"github.com/joho/godotenv"
 	"gopkg.in/lumberjack.v2"
@@ -83,6 +85,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	logPath := ""
+	if os.Getenv(envDaemonMode) != "1" && !daemon {
+		path, err := setupForegroundLogger()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "初始化前台日志文件失败: %v\n", err)
+			os.Exit(1)
+		}
+		logPath = path
+	}
+
 	// 首先加载当前目录的 .env 文件
 	if err := godotenv.Load(); err != nil {
 		log.Println("提示: 未找到 .env 文件，将使用系统环境变量")
@@ -121,6 +133,7 @@ func main() {
 		log.Printf("加载配置文件: %s", actualPath)
 	}
 	finalPort = unifiedConfig.GetPort()
+	log.Printf("启动版本: %s", appversion.Current().Display())
 
 	// 非 daemon 子进程启动时，先检查 PID 文件，判断是否已有实例在运行
 	if os.Getenv(envDaemonMode) != "1" {
@@ -128,11 +141,11 @@ func main() {
 		if data, err := os.ReadFile(pidPath); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
 				if proc, err := os.FindProcess(pid); err == nil {
-				if proc.Signal(syscall.Signal(0)) == nil {
-					fmt.Fprintf(os.Stderr, "sop-chat-server 已在运行（PID=%d），\n如需重启请先执行: ./sop-chat-server stop\n如需查看管理地址: ./sop-chat-server adminurl\n", pid)
-					fmt.Fprintln(os.Stderr, "启动失败")
-					os.Exit(1)
-				}
+					if proc.Signal(syscall.Signal(0)) == nil {
+						fmt.Fprintf(os.Stderr, "sop-chat-server 已在运行（PID=%d），\n如需重启请先执行: ./sop-chat-server stop\n如需查看管理地址: ./sop-chat-server adminurl\n", pid)
+						fmt.Fprintln(os.Stderr, "启动失败")
+						os.Exit(1)
+					}
 				}
 			}
 			// PID 文件存在但进程已不在，清理残留文件
@@ -360,11 +373,31 @@ func main() {
 			_ = os.Remove(urlFilePath)
 		}
 
+		if logPath != "" {
+			log.Printf("运行日志文件: %s", logPath)
+		}
 		log.Printf("启动 API 服务器，监听地址 %s", listenAddr)
 		if err := server.Run(listenAddr); err != nil {
 			log.Fatalf("服务器启动失败: %v", err)
 		}
 	}
+}
+
+func setupForegroundLogger() (string, error) {
+	logsDir := "logs"
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return "", err
+	}
+
+	logPath := filepath.Join(logsDir, adminLogName)
+	lj := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    100,
+		MaxBackups: 7,
+		Compress:   true,
+	}
+	log.SetOutput(io.MultiWriter(os.Stdout, lj))
+	return logPath, nil
 }
 
 // buildAdminURLs 根据 host、port、token 构造 admin-ui URL 列表。

@@ -2,11 +2,10 @@
  * Message Component
  * Displays message with events (tool calls and content) in true chronological order
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { submitFeedback } from '../services/api';
-import { copyToClipboard } from '../utils/clipboard';
 
 // Custom link renderer for ReactMarkdown - open links in new tab
 const LinkRenderer = ({ href, children }) => {
@@ -47,6 +46,43 @@ const detectAnswerSignals = (text = '') => {
   };
 };
 
+const stripThinkingBlocks = (text = '') => String(text || '')
+  .replace(/<think>[\s\S]*?<\/think>/g, '')
+  .trim();
+
+const buildAnswerText = (content, events = []) => {
+  if (content) {
+    return stripThinkingBlocks(content);
+  }
+  if (!events || events.length === 0) {
+    return '';
+  }
+
+  return events
+    .filter((event) => event.type === 'content')
+    .map((event) => stripThinkingBlocks(event.data))
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+};
+
+const sanitizeFileNamePart = (value = '') => String(value || '')
+  .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+  .replace(/\s+/g, '-')
+  .replace(/-+/g, '-')
+  .replace(/^-|-$/g, '')
+  .trim();
+
+const formatTimestampForFile = (date = new Date()) => {
+  const pad = (num) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+};
+
+const buildDownloadFileName = (question = '', assistantName = '') => {
+  const base = sanitizeFileNamePart(question || assistantName || 'sop-chat-report').slice(0, 40) || 'sop-chat-report';
+  return `${base}-${formatTimestampForFile()}.md`;
+};
+
 const Message = ({ 
   role, 
   content, 
@@ -73,10 +109,21 @@ const Message = ({
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [showImagePreview, setShowImagePreview] = useState(false); // For image preview modal
   const [previewImageIndex, setPreviewImageIndex] = useState(0); // Index of image being previewed
-  const [copySuccess, setCopySuccess] = useState(false); // Copy success indicator
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadReady, setDownloadReady] = useState(false);
+  const [downloadFileName, setDownloadFileName] = useState('');
+  const downloadTimerRef = useRef(null);
+  const downloadContentRef = useRef('');
   
   // Support both old single image and new multiple images format
   const images = imageDatas || (imageData ? [imageData] : []);
+
+  useEffect(() => () => {
+    if (downloadTimerRef.current) {
+      clearInterval(downloadTimerRef.current);
+    }
+  }, []);
   
   // Toggle thinking block expansion
   const toggleThinking = (id) => {
@@ -96,32 +143,62 @@ const Message = ({
   
   // Get the full answer text from events (excluding <think> blocks)
   const getAnswerText = () => {
-    if (content) return content;
-    if (!events || events.length === 0) return '';
-    
-    // Get all content chunks
-    const fullContent = events
-      .filter(e => e.type === 'content')
-      .map(e => e.data)
-      .join('');
-    
-    // Remove <think></think> blocks from the content
-    return fullContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    return buildAnswerText(content, events);
   };
-  
-  // Handle copy button click
-  const handleCopy = async () => {
-    const textToCopy = getAnswerText();
-    if (!textToCopy) return;
-    
+
+  const resetDownloadState = () => {
+    if (downloadTimerRef.current) {
+      clearInterval(downloadTimerRef.current);
+      downloadTimerRef.current = null;
+    }
+    setShowDownloadModal(false);
+    setDownloadProgress(0);
+    setDownloadReady(false);
+    setDownloadFileName('');
+    downloadContentRef.current = '';
+  };
+
+  const handlePrepareDownload = () => {
+    const answerText = getAnswerText();
+    if (!answerText) return;
+
+    downloadContentRef.current = answerText.endsWith('\n') ? answerText : `${answerText}\n`;
+    setDownloadFileName(buildDownloadFileName(question, assistantName));
+    setShowDownloadModal(true);
+    setDownloadProgress(0);
+    setDownloadReady(false);
+
+    if (downloadTimerRef.current) {
+      clearInterval(downloadTimerRef.current);
+    }
+
+    downloadTimerRef.current = setInterval(() => {
+      setDownloadProgress((prev) => {
+        const next = Math.min(prev + 5, 100);
+        if (next >= 100) {
+          clearInterval(downloadTimerRef.current);
+          downloadTimerRef.current = null;
+          setDownloadReady(true);
+        }
+        return next;
+      });
+    }, 80);
+  };
+
+  const handleConfirmDownload = async () => {
+    if (!downloadReady || !downloadContentRef.current) return;
+
     try {
-      const ok = await copyToClipboard(textToCopy);
-      if (!ok) {
-        throw new Error('copy_failed');
-      }
-      setCopySuccess(true);
-      
-      // Submit copy action as feedback (only if not shared and has conversation info)
+      const blob = new Blob([downloadContentRef.current], { type: 'text/markdown;charset=utf-8' });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = downloadFileName || buildDownloadFileName(question, assistantName);
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+
       if (!isShared && conversationId && requestId) {
         try {
           await submitFeedback(
@@ -130,19 +207,14 @@ const Message = ({
             'copy',
             null,
             question,
-            textToCopy
+            downloadContentRef.current
           );
         } catch (feedbackError) {
-          // Don't block copy operation if feedback fails
+          // 下载不应被埋点失败阻断
         }
       }
-      
-      // Reset success indicator after 2 seconds
-      setTimeout(() => {
-        setCopySuccess(false);
-      }, 2000);
-    } catch (error) {
-      console.error('Failed to copy text:', error);
+    } finally {
+      resetDownloadState();
     }
   };
   
@@ -839,13 +911,13 @@ const Message = ({
                     </button>
                   </>
                 )}
-                {/* Always show copy button when there's content */}
+                {/* Always show download button when there's content */}
                 <button 
-                  className={`feedback-btn copy-btn ${copySuccess ? 'active' : ''}`}
-                  onClick={handleCopy}
-                  title="复制回答内容"
+                  className="feedback-btn download-btn"
+                  onClick={handlePrepareDownload}
+                  title="下载回答内容"
                 >
-                  {copySuccess ? '已复制' : '复制'}
+                  下载
                 </button>
               </div>
               {/* Thank you message after feedback */}
@@ -890,6 +962,47 @@ const Message = ({
                 disabled={isSubmittingFeedback}
               >
                 {isSubmittingFeedback ? '提交中...' : '提交反馈'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDownloadModal && (
+        <div className="feedback-modal-overlay" onClick={resetDownloadState}>
+          <div className="feedback-modal download-modal" onClick={e => e.stopPropagation()}>
+            <div className="feedback-modal-header">
+              <h3>准备下载报告</h3>
+              <button className="feedback-modal-close" onClick={resetDownloadState}>×</button>
+            </div>
+            <div className="feedback-modal-body download-modal-body">
+              <div className="download-file-name">{downloadFileName}</div>
+              <div className="download-progress-track">
+                <div className="download-progress-value" style={{ width: `${downloadProgress}%` }} />
+              </div>
+              <div className="download-progress-meta">
+                <span>{downloadReady ? '报告已准备完成' : '正在整理完整回答内容...'}</span>
+                <span>{downloadProgress}%</span>
+              </div>
+              <p className="download-modal-hint">
+                {downloadReady
+                  ? '内容已整理完成，点击“确认下载”开始下载 Markdown 报告。'
+                  : '请稍候，系统正在整理完整回答内容并生成下载文件。'}
+              </p>
+            </div>
+            <div className="feedback-modal-footer">
+              <button
+                className="feedback-modal-cancel"
+                onClick={resetDownloadState}
+              >
+                取消
+              </button>
+              <button
+                className="feedback-modal-submit"
+                onClick={handleConfirmDownload}
+                disabled={!downloadReady}
+              >
+                确认下载
               </button>
             </div>
           </div>
