@@ -156,8 +156,8 @@ func (b *Bot) UpdateConfig(newCfg *config.DingTalkConfig, globalConfig *config.C
 	defer b.cfgMu.Unlock()
 	b.dtConfig = newCfg
 	b.globalConfig = globalConfig
-	log.Printf("[DingTalk] 配置已热更新: clientId=%s allowedGroupUsers=%v allowedDirectUsers=%v conciseReply=%v",
-		newCfg.ClientId, newCfg.AllowedGroupUsers, newCfg.AllowedDirectUsers, newCfg.ConciseReply)
+	log.Printf("[DingTalk] 配置已热更新: clientId=%s allowedGroupUsers=%v allowedDirectUsers=%v conciseReply=%v progressFeedback=%v",
+		newCfg.ClientId, newCfg.AllowedGroupUsers, newCfg.AllowedDirectUsers, newCfg.ConciseReply, newCfg.ProgressFeedbackEnabled())
 }
 
 // Start 启动钉钉 Stream 连接（非阻塞：SDK 内部以 goroutine 运行消息循环）
@@ -314,6 +314,33 @@ func stringifyAny(value interface{}) string {
 	}
 }
 
+func toolPurposeDescription(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "todowrite":
+		return "先梳理接下来要分析的步骤，避免遗漏关键排查点"
+	case "search_query":
+		return "联网检索和当前问题相关的公开信息"
+	case "open", "click", "find":
+		return "继续展开网页内容，提取更具体的上下文"
+	case "finance":
+		return "查询最新价格或金融指标"
+	case "weather":
+		return "查询实时天气信息"
+	case "sports":
+		return "查询最新赛程、比分或排名"
+	case "time":
+		return "确认当前时间或时区信息"
+	case "exec_command":
+		return "在本地环境中执行命令，核对代码或运行结果"
+	case "apply_patch":
+		return "修改代码或配置，把修复真正落到文件里"
+	case "view_image":
+		return "查看图片内容，补充当前判断依据"
+	default:
+		return "补充当前分析所需的信息"
+	}
+}
+
 func formatToolStage(tool map[string]interface{}) string {
 	if tool == nil {
 		return ""
@@ -324,9 +351,9 @@ func formatToolStage(tool map[string]interface{}) string {
 	}
 	switch strings.ToLower(stringifyAny(tool["status"])) {
 	case "start":
-		return fmt.Sprintf("正在调用工具「%s」", name)
+		return fmt.Sprintf("正在调用工具「%s」，%s", name, toolPurposeDescription(name))
 	case "fail", "failed", "error":
-		return fmt.Sprintf("工具「%s」执行失败，正在继续整理可用结果", name)
+		return fmt.Sprintf("工具「%s」执行失败，已跳过这一步，继续整理现有结果", name)
 	default:
 		return ""
 	}
@@ -338,14 +365,22 @@ func appendShareSentence(replyText, shareURL string) string {
 	if shareURL == "" {
 		return replyText
 	}
-	shareSentence := "完整对话与分析过程：" + shareURL
+	shareSentence := fmt.Sprintf("完整对话与分析过程：[点击查看](%s)（若无法点击，可复制：%s）", shareURL, shareURL)
 	if replyText == "" {
 		return shareSentence
 	}
 	return replyText + "\n\n" + shareSentence
 }
 
-func renderCardProgressContent(stages []string, replyText, shareURL string) string {
+func renderCardProgressContent(progressFeedbackEnabled bool, stages []string, replyText, shareURL string) string {
+	if !progressFeedbackEnabled {
+		content := appendShareSentence(replyText, shareURL)
+		if content == "" {
+			return "正在思考中..."
+		}
+		return content
+	}
+
 	lines := make([]string, 0, len(stages)+6)
 	if len(stages) > 0 {
 		lines = append(lines, "处理进度：")
@@ -373,6 +408,7 @@ func (b *Bot) buildShareURL(route resolvedRoute, threadID string) string {
 
 	base := strings.TrimSpace(globalCfg.GetPublicBaseURL())
 	if base == "" {
+		log.Printf("[DingTalk] 未生成分享链接：server.publicBaseURL 未配置，且当前 host 无法推导可访问地址")
 		return ""
 	}
 	base = strings.TrimRight(base, "/")
@@ -469,14 +505,19 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		// 走 Markdown 路径：先告知用户已收到
 		_ = replier.SimpleReplyText(asyncCtx, webhook, []byte("收到，正在处理中..."))
-		progressReporter := newMarkdownProgressReporter(webhook)
-		progressReporter.ReportStage(asyncCtx, "已建立会话，正在分析问题")
-
-		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, route, func(update chatProgressUpdate) {
-			if update.Stage != "" {
-				progressReporter.ReportStage(asyncCtx, update.Stage)
+		progressFeedbackEnabled := cfg.ProgressFeedbackEnabled()
+		var onUpdate func(chatProgressUpdate)
+		if progressFeedbackEnabled {
+			progressReporter := newMarkdownProgressReporter(webhook)
+			progressReporter.ReportStage(asyncCtx, "已建立会话，正在分析问题")
+			onUpdate = func(update chatProgressUpdate) {
+				if update.Stage != "" {
+					progressReporter.ReportStage(asyncCtx, update.Stage)
+				}
 			}
-		})
+		}
+
+		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, route, onUpdate)
 		if err != nil {
 			log.Printf("[DingTalk] 调用数字员工失败: %v", err)
 			replyError(asyncCtx, webhook, err)
@@ -493,7 +534,11 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		log.Printf("[DingTalk] 正在回复钉钉消息，sessionWebhook=%s", webhook)
 
-		shareURL := b.buildShareURL(route, newThreadId)
+		finalThreadId := newThreadId
+		if strings.TrimSpace(finalThreadId) == "" {
+			finalThreadId = threadId
+		}
+		shareURL := b.buildShareURL(route, finalThreadId)
 		finalReplyText := appendShareSentence(replyText, shareURL)
 
 		var replyErr error
@@ -1147,13 +1192,17 @@ func (b *Bot) replyWithStreamingCard(
 	if contentKey == "" {
 		contentKey = "content"
 	}
+	progressFeedbackEnabled := cfg.ProgressFeedbackEnabled()
 
 	// 1. 生成唯一的 outTrackId
 	outTrackId := fmt.Sprintf("sop-%s-%d", msgId, time.Now().UnixMilli())
 
 	// 2. 构建投放请求
-	initialStages := []string{"已收到问题，正在准备分析"}
-	initialContent := renderCardProgressContent(initialStages, "", "")
+	initialStages := []string{}
+	if progressFeedbackEnabled {
+		initialStages = []string{"已收到问题，正在准备分析"}
+	}
+	initialContent := renderCardProgressContent(progressFeedbackEnabled, initialStages, "", "")
 	var cardReq *openapi.CreateAndDeliverCardRequest
 	if conversationType == "2" {
 		// 群聊
@@ -1236,30 +1285,35 @@ func (b *Bot) replyWithStreamingCard(
 	}
 
 	onUpdate := func(update chatProgressUpdate) {
-		if update.Stage != "" {
+		if progressFeedbackEnabled && update.Stage != "" {
 			stageTrail = appendUniqueStage(stageTrail, update.Stage, maxCardProgressStages)
 		}
 		if update.Accumulated != "" {
 			replyDraft = update.Accumulated
 		}
-			pushCardUpdate(renderCardProgressContent(stageTrail, replyDraft, ""), false, false)
-		}
+		pushCardUpdate(renderCardProgressContent(progressFeedbackEnabled, stageTrail, replyDraft, ""), false, false)
+	}
 
-		replyText, newThreadId, queryErr := b.queryEmployeeStreaming(ctx, message, threadId, route, onUpdate)
+	replyText, newThreadId, queryErr := b.queryEmployeeStreaming(ctx, message, threadId, route, onUpdate)
 
 	// 5. 发送最终帧
 	shareURL := ""
+	finalThreadId := newThreadId
+	if strings.TrimSpace(finalThreadId) == "" {
+		finalThreadId = threadId
+	}
 	if queryErr == nil {
-		shareURL = b.buildShareURL(route, newThreadId)
+		shareURL = b.buildShareURL(route, finalThreadId)
 	}
-	finalContent := renderCardProgressContent(stageTrail, replyText, shareURL)
+	finalStages := stageTrail
+	finalReplyText := replyText
 	if queryErr != nil {
-		finalContent = renderCardProgressContent(
-			appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages),
-			"查询失败: "+queryErr.Error(),
-			"",
-		)
+		finalReplyText = "查询失败: " + queryErr.Error()
+		if progressFeedbackEnabled {
+			finalStages = appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages)
+		}
 	}
+	finalContent := renderCardProgressContent(progressFeedbackEnabled, finalStages, finalReplyText, shareURL)
 	pushCardUpdate(finalContent, true, queryErr != nil)
 
 	// 6. 更新 threadId 缓存

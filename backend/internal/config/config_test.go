@@ -153,6 +153,24 @@ func TestApplyCompatibilityDefaultsMigratesLegacyGlobal(t *testing.T) {
 	}
 }
 
+func TestDingTalkProgressFeedbackEnabledDefaultsToTrue(t *testing.T) {
+	enabled := true
+	disabled := false
+
+	if !(*DingTalkConfig)(nil).ProgressFeedbackEnabled() {
+		t.Fatalf("expected nil dingtalk config to default progress feedback to true")
+	}
+	if !(&DingTalkConfig{}).ProgressFeedbackEnabled() {
+		t.Fatalf("expected missing progressFeedback to default to true")
+	}
+	if !(&DingTalkConfig{ProgressFeedback: &enabled}).ProgressFeedbackEnabled() {
+		t.Fatalf("expected explicit true progressFeedback to stay enabled")
+	}
+	if (&DingTalkConfig{ProgressFeedback: &disabled}).ProgressFeedbackEnabled() {
+		t.Fatalf("expected explicit false progressFeedback to disable stage feedback")
+	}
+}
+
 func TestResolveProductUsesWorkspaceAndProjectHints(t *testing.T) {
 	if got := ResolveProduct("", "", "workspace-a"); got != "cms" {
 		t.Fatalf("expected workspace to imply cms, got %q", got)

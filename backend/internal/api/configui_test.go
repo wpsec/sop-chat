@@ -199,6 +199,33 @@ func TestBuildConfigFromUIClearsChannelWhenFieldPresentEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildConfigFromUIDingTalkProgressFeedback(t *testing.T) {
+	cfg, err := buildConfigFromUI(&config.Config{}, configUIResponse{
+		DingTalk: []configUIDingTalk{
+			{
+				Enabled:          true,
+				ClientId:         "dt-app",
+				ClientSecret:     "dt-secret",
+				EmployeeName:     "assistant-prod",
+				ProgressFeedback: false,
+			},
+		},
+	}, configUIFieldPresence{DingTalk: true})
+	if err != nil {
+		t.Fatalf("buildConfigFromUI returned error: %v", err)
+	}
+
+	if cfg.Channels == nil || len(cfg.Channels.DingTalk) != 1 {
+		t.Fatalf("expected one dingtalk config, got %+v", cfg.Channels)
+	}
+	if cfg.Channels.DingTalk[0].ProgressFeedback == nil {
+		t.Fatalf("expected progressFeedback to be written explicitly")
+	}
+	if *cfg.Channels.DingTalk[0].ProgressFeedback {
+		t.Fatalf("expected progressFeedback=false to be preserved, got %+v", cfg.Channels.DingTalk[0].ProgressFeedback)
+	}
+}
+
 func TestBuildConfigFromUIPreservesBuiltinPasswordWhenRenamingUser(t *testing.T) {
 	existing := &config.Config{
 		Auth: config.AuthConfig{

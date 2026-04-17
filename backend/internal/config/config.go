@@ -181,6 +181,8 @@ type DingTalkConfig struct {
 	CloudAccountID string `yaml:"cloudAccountId,omitempty"`
 	// 开启后，发送给大模型的消息会附加精简指令，要求回复简短、适合 IM 阅读
 	ConciseReply bool `yaml:"conciseReply,omitempty"`
+	// 是否发送阶段反馈；nil 或 true 表示开启，false 表示关闭
+	ProgressFeedback *bool `yaml:"progressFeedback,omitempty"`
 	// Product 指定该渠道对接的数字员工所属产品：sls（默认）或 cms。
 	// 为空时根据 project/workspace 推断；都为空时默认 sls。
 	Product string `yaml:"product,omitempty"`
@@ -205,6 +207,15 @@ type DingTalkConfig struct {
 	ConversationRoutes []ConversationRoute `yaml:"conversationRoutes,omitempty"`
 	// 云账号路由：按消息里识别到的 cloudAccountId 切换数字员工；匹配不到时使用顶层 employeeName
 	CloudAccountRoutes []CloudAccountRoute `yaml:"cloudAccountRoutes,omitempty"`
+}
+
+// ProgressFeedbackEnabled 返回钉钉机器人是否开启阶段反馈。
+// 配置缺失时默认开启（true）。
+func (c *DingTalkConfig) ProgressFeedbackEnabled() bool {
+	if c == nil || c.ProgressFeedback == nil {
+		return true
+	}
+	return *c.ProgressFeedback
 }
 
 // FeishuConfig 飞书机器人配置

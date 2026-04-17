@@ -147,6 +147,7 @@ auth:
 #       employeeName: "employee-name-1"
 #       cloudAccountId: "default"   # 绑定云账号（默认 default）
 #       conciseReply: true        # true=简洁 IM 风格；false=按完整 SOP 风格回答
+#       progressFeedback: true    # true=发送阶段反馈；false=仅发送开始提示和最终回答（默认 true）
 #       product: "sls"            # 数字员工对应的 product（建议显式配置）
 #       project: ""               # SLS 产品：数字员工所属 project（product=sls 时生效，写入 Thread Variables）
 #       workspace: ""             # CMS 产品：数字员工所属 workspace（product=cms 时生效，写入 Thread Variables）

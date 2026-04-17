@@ -209,6 +209,7 @@ type configUIDingTalk struct {
 	EmployeeName         string                      `json:"employeeName"`
 	CloudAccountID       string                      `json:"cloudAccountId"`
 	ConciseReply         bool                        `json:"conciseReply"`
+	ProgressFeedback     bool                        `json:"progressFeedback"`
 	CardTemplateId       string                      `json:"cardTemplateId"`
 	CardContentKey       string                      `json:"cardContentKey"`
 	Product              string                      `json:"product"`
@@ -701,13 +702,17 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 					}
 				}
 				cfg.Channels.DingTalk = append(cfg.Channels.DingTalk, config.DingTalkConfig{
-					Enabled:              dt.Enabled,
-					Name:                 dt.Name,
-					ClientId:             dt.ClientId,
-					ClientSecret:         dt.ClientSecret,
-					EmployeeName:         dt.EmployeeName,
-					CloudAccountID:       config.NormalizeCloudAccountID(dt.CloudAccountID),
-					ConciseReply:         dt.ConciseReply,
+					Enabled:        dt.Enabled,
+					Name:           dt.Name,
+					ClientId:       dt.ClientId,
+					ClientSecret:   dt.ClientSecret,
+					EmployeeName:   dt.EmployeeName,
+					CloudAccountID: config.NormalizeCloudAccountID(dt.CloudAccountID),
+					ConciseReply:   dt.ConciseReply,
+					ProgressFeedback: func() *bool {
+						v := dt.ProgressFeedback
+						return &v
+					}(),
 					CardTemplateId:       dt.CardTemplateId,
 					CardContentKey:       dt.CardContentKey,
 					Product:              dt.Product,
@@ -1054,6 +1059,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 				EmployeeName:         dt.EmployeeName,
 				CloudAccountID:       config.NormalizeCloudAccountID(dt.CloudAccountID),
 				ConciseReply:         dt.ConciseReply,
+				ProgressFeedback:     dt.ProgressFeedbackEnabled(),
 				CardTemplateId:       dt.CardTemplateId,
 				CardContentKey:       dt.CardContentKey,
 				Product:              base.Product,

@@ -1564,6 +1564,17 @@ function makeDingTalkBotCard(bot, idx) {
           '<span class="hint" style="margin:0">开启后回复内容更精简，适合在 IM 中直接阅读</span>' +
         '</div>' +
       '</div>' +
+      '<div class="field field-full" style="flex-direction:row;align-items:center;gap:10px;padding-top:2px">' +
+        '<label class="toggle">' +
+          '<input type="checkbox" data-field="progressFeedback"' + (bot.progressFeedback !== false ? ' checked' : '') + '>' +
+          '<span class="toggle-track"></span>' +
+          '<span class="toggle-thumb"></span>' +
+        '</label>' +
+        '<div style="display:flex;flex-direction:column;gap:2px">' +
+          '<span style="font-size:13px;font-weight:500;color:var(--text)">阶段反馈 <span class="hint">关闭后不发送处理中阶段提示</span></span>' +
+          '<span class="hint" style="margin:0">默认开启。关闭后仅发送“收到，正在处理中...”和最终回答</span>' +
+        '</div>' +
+      '</div>' +
       '<div class="field field-full" style="margin-top:4px">' +
         '<details class="field" style="width:100%;padding:0;border:none;background:none"' + ((bot.cardTemplateId) ? ' open' : '') + '>' +
           '<summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px;user-select:none">' +
@@ -1612,7 +1623,7 @@ function makeDingTalkBotCard(bot, idx) {
 
 function addDingTalkBot() {
   const container = document.getElementById('dt-bots-list');
-  container.appendChild(makeDingTalkBotCard({ enabled: true, conciseReply: true, employeeName: 'apsara-ops', cloudAccountId: preferredDefaultCloudAccountId(), product: 'sls' }, container.children.length));
+  container.appendChild(makeDingTalkBotCard({ enabled: true, conciseReply: true, progressFeedback: true, employeeName: 'apsara-ops', cloudAccountId: preferredDefaultCloudAccountId(), product: 'sls' }, container.children.length));
   updateBotVariableFields();
 }
 
@@ -1772,6 +1783,7 @@ function collectDingTalkBots() {
     employeeName: card.querySelector('[data-field=employeeName]').value.trim(),
     cloudAccountId: card.querySelector('[data-field=cloudAccountId]').value.trim(),
     conciseReply: card.querySelector('[data-field=conciseReply]').checked,
+    progressFeedback: card.querySelector('[data-field=progressFeedback]').checked,
     cardTemplateId: (card.querySelector('[data-field=cardTemplateId]') || {}).value?.trim() || '',
     cardContentKey: (card.querySelector('[data-field=cardContentKey]') || {}).value?.trim() || '',
     product:      card.querySelector('[data-field=product]').value,
