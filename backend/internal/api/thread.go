@@ -3,11 +3,23 @@ package api
 import (
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
+	"github.com/gin-gonic/gin"
 
 	"sop-chat/internal/auth"
+	"sop-chat/internal/config"
 	"sop-chat/pkg/sopchat"
+)
 
-	"github.com/gin-gonic/gin"
+const (
+	threadUserAttributeKey          = "user"
+	threadFirstQuestionAttributeKey = "firstUserQuestion"
+	threadQuestionPreviewMaxRunes   = 80
 )
 
 // CreateThreadRequest 创建线程请求
@@ -116,6 +128,15 @@ func (s *Server) handleListThreads(c *gin.Context) {
 	}
 
 	cloudAccountID := c.Query("cloudAccountId")
+	includeQuestionPreview := isTruthyQueryValue(c.Query("includeQuestionPreview"))
+	limit, err := parseThreadLimit(c.Query("limit"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "Invalid limit",
+			"detail": err.Error(),
+		})
+		return
+	}
 	client, err := s.createClientForCloudAccount(cloudAccountID)
 	if err != nil {
 		log.Printf("Failed to create client: %v", err)
@@ -152,8 +173,22 @@ func (s *Server) handleListThreads(c *gin.Context) {
 		return
 	}
 
-	threads := make([]gin.H, 0, len(response.Body.Threads))
-	for _, thread := range response.Body.Threads {
+	normalizedCloudAccountID := config.NormalizeCloudAccountID(cloudAccountID)
+	threadItems := append([]*cmsclient.ListThreadsResponseBodyThreads(nil), response.Body.Threads...)
+	sort.SliceStable(threadItems, func(i, j int) bool {
+		left := threadSortTime(threadItems[i])
+		right := threadSortTime(threadItems[j])
+		if left.Equal(right) {
+			return strings.TrimSpace(pointerString(threadItems[i].ThreadId)) > strings.TrimSpace(pointerString(threadItems[j].ThreadId))
+		}
+		return left.After(right)
+	})
+	if limit > 0 && len(threadItems) > limit {
+		threadItems = threadItems[:limit]
+	}
+
+	threads := make([]gin.H, 0, len(threadItems))
+	for _, thread := range threadItems {
 		item := gin.H{}
 		if thread.ThreadId != nil {
 			item["threadId"] = *thread.ThreadId
@@ -167,8 +202,22 @@ func (s *Server) handleListThreads(c *gin.Context) {
 		if thread.Status != nil {
 			item["status"] = *thread.Status
 		}
-		if cloudAccountID != "" {
-			item["cloudAccountId"] = cloudAccountID
+		questionPreview := normalizeThreadQuestionPreview(
+			threadAttributeString(thread.Attributes, threadFirstQuestionAttributeKey),
+		)
+		threadID := pointerString(thread.ThreadId)
+		if questionPreview == "" {
+			if cached, ok := s.loadThreadQuestionPreview(normalizedCloudAccountID, employeeName, threadID); ok {
+				questionPreview = cached
+			} else if includeQuestionPreview {
+				questionPreview = s.fetchAndCacheThreadQuestionPreview(client, normalizedCloudAccountID, employeeName, threadID)
+			}
+		}
+		if questionPreview != "" {
+			item["questionPreview"] = questionPreview
+		}
+		if normalizedCloudAccountID != "" {
+			item["cloudAccountId"] = normalizedCloudAccountID
 		}
 		threads = append(threads, item)
 	}
@@ -232,8 +281,13 @@ func (s *Server) handleGetThread(c *gin.Context) {
 	if body.Status != nil {
 		result["status"] = *body.Status
 	}
-	if cloudAccountID != "" {
-		result["cloudAccountId"] = cloudAccountID
+	if questionPreview := normalizeThreadQuestionPreview(
+		threadAttributeString(body.Attributes, threadFirstQuestionAttributeKey),
+	); questionPreview != "" {
+		result["questionPreview"] = questionPreview
+	}
+	if normalizedCloudAccountID := config.NormalizeCloudAccountID(cloudAccountID); normalizedCloudAccountID != "" {
+		result["cloudAccountId"] = normalizedCloudAccountID
 	}
 
 	c.JSON(http.StatusOK, result)
@@ -279,6 +333,10 @@ func (s *Server) handleGetThreadMessages(c *gin.Context) {
 		return
 	}
 
+	if questionPreview := extractThreadQuestionPreview(response.Body.Data); questionPreview != "" {
+		s.storeThreadQuestionPreview(config.NormalizeCloudAccountID(cloudAccountID), employeeName, threadId, questionPreview)
+	}
+
 	// 收集所有数据记录中的消息
 	messages := make([]gin.H, 0)
 	for _, data := range response.Body.Data {
@@ -320,14 +378,140 @@ func (s *Server) handleGetThreadMessages(c *gin.Context) {
 
 // handleGetSharedThread 获取分享的线程详细信息（公开访问，无需认证）
 func (s *Server) handleGetSharedThread(c *gin.Context) {
-	// 复用 handleGetThread 的逻辑，但不需要认证
-	s.handleGetThread(c)
+	employeeName := c.Param("employeeName")
+	threadId := c.Param("threadId")
+	claims, ok := s.validateShareToken(c, employeeName, threadId)
+	if !ok {
+		return
+	}
+
+	client, err := s.createClientForCloudAccount(claims.CloudAccountID)
+	if err != nil {
+		log.Printf("Failed to create share client: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "Failed to create client",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	response, err := client.GetThread(employeeName, threadId)
+	if err != nil {
+		log.Printf("Failed to get shared thread info: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "Failed to get thread info",
+			"detail": err.Error(),
+		})
+		return
+	}
+	if response.Body == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Thread not found",
+		})
+		return
+	}
+
+	body := response.Body
+	result := gin.H{}
+	if body.ThreadId != nil {
+		result["threadId"] = *body.ThreadId
+	}
+	if body.Title != nil {
+		result["title"] = *body.Title
+	}
+	if body.CreateTime != nil {
+		result["createTime"] = *body.CreateTime
+	}
+	if body.Status != nil {
+		result["status"] = *body.Status
+	}
+	if questionPreview := normalizeThreadQuestionPreview(
+		threadAttributeString(body.Attributes, threadFirstQuestionAttributeKey),
+	); questionPreview != "" {
+		result["questionPreview"] = questionPreview
+	}
+	result["cloudAccountId"] = config.NormalizeCloudAccountID(claims.CloudAccountID)
+	if claims.ExpiresAt != nil {
+		result["shareExpiresAt"] = claims.ExpiresAt.Time.Format(time.RFC3339)
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // handleGetSharedThreadMessages 获取分享的线程消息（公开访问，无需认证）
 func (s *Server) handleGetSharedThreadMessages(c *gin.Context) {
-	// 复用 handleGetThreadMessages 的逻辑，但不需要认证
-	s.handleGetThreadMessages(c)
+	employeeName := c.Param("employeeName")
+	threadId := c.Param("threadId")
+	claims, ok := s.validateShareToken(c, employeeName, threadId)
+	if !ok {
+		return
+	}
+
+	client, err := s.createClientForCloudAccount(claims.CloudAccountID)
+	if err != nil {
+		log.Printf("Failed to create share client: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "Failed to create client",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	response, err := client.GetThreadData(employeeName, threadId)
+	if err != nil {
+		log.Printf("Failed to get shared thread messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "Failed to get thread messages",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	if response.Body == nil || response.Body.Data == nil || len(response.Body.Data) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"messages": []gin.H{},
+		})
+		return
+	}
+
+	if questionPreview := extractThreadQuestionPreview(response.Body.Data); questionPreview != "" {
+		s.storeThreadQuestionPreview(config.NormalizeCloudAccountID(claims.CloudAccountID), employeeName, threadId, questionPreview)
+	}
+
+	messages := make([]gin.H, 0)
+	for _, data := range response.Body.Data {
+		if data.Messages == nil {
+			continue
+		}
+		for _, msg := range data.Messages {
+			item := gin.H{}
+			if msg.Role != nil {
+				item["role"] = *msg.Role
+			}
+			if msg.Contents != nil && len(msg.Contents) > 0 {
+				contents := make([]gin.H, 0, len(msg.Contents))
+				for _, content := range msg.Contents {
+					contentItem := gin.H{}
+					if contentType, ok := content["type"].(string); ok {
+						contentItem["type"] = contentType
+					}
+					if contentValue, ok := content["value"].(string); ok {
+						contentItem["value"] = contentValue
+					}
+					contents = append(contents, contentItem)
+				}
+				item["contents"] = contents
+			}
+			if msg.Tools != nil && len(msg.Tools) > 0 {
+				item["tools"] = msg.Tools
+			}
+			messages = append(messages, item)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"messages": messages,
+	})
 }
 
 // handleGetSharedEmployee 获取分享的员工信息（公开访问，无需认证）
@@ -341,7 +525,12 @@ func (s *Server) handleGetSharedEmployee(c *gin.Context) {
 		return
 	}
 
-	client, err := s.createClientForCloudAccount(c.Query("cloudAccountId"))
+	claims, ok := s.validateShareToken(c, employeeName, "")
+	if !ok {
+		return
+	}
+
+	client, err := s.createClientForCloudAccount(claims.CloudAccountID)
 	if err != nil {
 		log.Printf("Failed to create client: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -379,6 +568,172 @@ func (s *Server) handleGetSharedEmployee(c *gin.Context) {
 	if body.Description != nil {
 		result["description"] = *body.Description
 	}
+	result["cloudAccountId"] = config.NormalizeCloudAccountID(claims.CloudAccountID)
 
 	c.JSON(http.StatusOK, result)
+}
+
+func parseThreadLimit(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return limit, nil
+}
+
+func isTruthyQueryValue(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func pointerString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func threadAttributeString(attrs map[string]*string, key string) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	if value, ok := attrs[key]; ok && value != nil {
+		return *value
+	}
+	return ""
+}
+
+func normalizeThreadQuestionPreview(text string) string {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if normalized == "" {
+		return ""
+	}
+
+	runes := []rune(normalized)
+	if len(runes) <= threadQuestionPreviewMaxRunes {
+		return normalized
+	}
+	return strings.TrimSpace(string(runes[:threadQuestionPreviewMaxRunes])) + "..."
+}
+
+func extractThreadQuestionPreview(data []*cmsclient.GetThreadDataResponseBodyData) string {
+	for _, item := range data {
+		if item == nil || len(item.Messages) == 0 {
+			continue
+		}
+		for _, message := range item.Messages {
+			if message == nil || message.Role == nil || strings.ToLower(strings.TrimSpace(*message.Role)) != "user" {
+				continue
+			}
+			text := extractThreadQuestionPreviewText(message.Contents)
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func extractThreadQuestionPreviewText(contents []map[string]interface{}) string {
+	if len(contents) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, content := range contents {
+		contentType, _ := content["type"].(string)
+		if contentType != "text" {
+			continue
+		}
+		value, _ := content["value"].(string)
+		if value == "" {
+			continue
+		}
+		builder.WriteString(value)
+	}
+
+	return normalizeThreadQuestionPreview(builder.String())
+}
+
+func threadSortTime(thread *cmsclient.ListThreadsResponseBodyThreads) time.Time {
+	for _, candidate := range []string{pointerString(thread.UpdateTime), pointerString(thread.CreateTime)} {
+		if parsed, ok := parseThreadTime(candidate); ok {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func parseThreadTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func threadQuestionPreviewCacheKey(cloudAccountID, employeeName, threadID string) string {
+	return config.NormalizeCloudAccountID(cloudAccountID) + "\x00" +
+		strings.TrimSpace(employeeName) + "\x00" +
+		strings.TrimSpace(threadID)
+}
+
+func (s *Server) loadThreadQuestionPreview(cloudAccountID, employeeName, threadID string) (string, bool) {
+	value, ok := s.threadPreviewCache.Load(threadQuestionPreviewCacheKey(cloudAccountID, employeeName, threadID))
+	if !ok {
+		return "", false
+	}
+	preview, ok := value.(string)
+	return preview, ok && preview != ""
+}
+
+func (s *Server) storeThreadQuestionPreview(cloudAccountID, employeeName, threadID, preview string) {
+	preview = normalizeThreadQuestionPreview(preview)
+	if preview == "" {
+		return
+	}
+	s.threadPreviewCache.Store(threadQuestionPreviewCacheKey(cloudAccountID, employeeName, threadID), preview)
+}
+
+func (s *Server) fetchAndCacheThreadQuestionPreview(client *sopchat.Client, cloudAccountID, employeeName, threadID string) string {
+	if client == nil || strings.TrimSpace(threadID) == "" {
+		return ""
+	}
+	if preview, ok := s.loadThreadQuestionPreview(cloudAccountID, employeeName, threadID); ok {
+		return preview
+	}
+
+	response, err := client.GetThreadData(employeeName, threadID)
+	if err != nil || response == nil || response.Body == nil {
+		if err != nil {
+			log.Printf("Failed to fetch thread preview for %s: %v", threadID, err)
+		}
+		return ""
+	}
+
+	preview := extractThreadQuestionPreview(response.Body.Data)
+	if preview != "" {
+		s.storeThreadQuestionPreview(cloudAccountID, employeeName, threadID, preview)
+	}
+	return preview
 }

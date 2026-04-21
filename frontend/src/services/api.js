@@ -222,10 +222,20 @@ export const createThread = async (employeeName, title = '', attributes = {}, cl
  * @param {string} employeeName - Employee name
  * @returns {Promise} List of threads
  */
-export const listThreads = async (employeeName, cloudAccountId = '') => {
+export const listThreads = async (employeeName, cloudAccountId = '', options = {}) => {
   try {
+    const params = {};
+    if (cloudAccountId) {
+      params.cloudAccountId = cloudAccountId;
+    }
+    if (typeof options.limit === 'number') {
+      params.limit = options.limit;
+    }
+    if (options.includeQuestionPreview) {
+      params.includeQuestionPreview = true;
+    }
     const response = await apiClient.get(`/api/threads/${employeeName}`, {
-      params: cloudAccountId ? { cloudAccountId } : undefined,
+      params: Object.keys(params).length > 0 ? params : undefined,
     });
     return response.data.threads;
   } catch (error) {
@@ -275,11 +285,11 @@ export const getThreadMessages = async (employeeName, threadId, cloudAccountId =
  * @param {string} threadId - Thread ID
  * @returns {Promise} Thread details
  */
-export const getSharedThread = async (employeeName, threadId, cloudAccountId = '') => {
+export const getSharedThread = async (employeeName, threadId, shareToken = '') => {
   try {
     const response = await publicApiClient.get(
       `/api/share/${encodeURIComponent(employeeName)}/${encodeURIComponent(threadId)}`,
-      { params: cloudAccountId ? { cloudAccountId } : undefined }
+      { params: shareToken ? { shareToken } : undefined }
     );
     return response.data;
   } catch (error) {
@@ -293,11 +303,11 @@ export const getSharedThread = async (employeeName, threadId, cloudAccountId = '
  * @param {string} threadId - Thread ID
  * @returns {Promise} Thread messages
  */
-export const getSharedThreadMessages = async (employeeName, threadId, cloudAccountId = '') => {
+export const getSharedThreadMessages = async (employeeName, threadId, shareToken = '') => {
   try {
     const response = await publicApiClient.get(
       `/api/share/${encodeURIComponent(employeeName)}/${encodeURIComponent(threadId)}/messages`,
-      { params: cloudAccountId ? { cloudAccountId } : undefined }
+      { params: shareToken ? { shareToken } : undefined }
     );
     return response.data.messages;
   } catch (error) {
@@ -310,14 +320,34 @@ export const getSharedThreadMessages = async (employeeName, threadId, cloudAccou
  * @param {string} employeeName - Employee name
  * @returns {Promise} Employee info
  */
-export const getSharedEmployee = async (employeeName, cloudAccountId = '') => {
+export const getSharedEmployee = async (employeeName, shareToken = '') => {
   try {
     const response = await publicApiClient.get(`/api/share/employee/${encodeURIComponent(employeeName)}`, {
-      params: cloudAccountId ? { cloudAccountId } : undefined,
+      params: shareToken ? { shareToken } : undefined,
     });
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.detail || '获取员工信息失败');
+  }
+};
+
+/**
+ * Create a share link token for a thread
+ * @param {string} employeeName - Employee name
+ * @param {string} threadId - Thread ID
+ * @param {string} cloudAccountId - Cloud account ID
+ * @returns {Promise} Share token and expiry
+ */
+export const createShareLink = async (employeeName, threadId, cloudAccountId = '') => {
+  try {
+    const response = await apiClient.post('/api/share-links', {
+      employeeName,
+      threadId,
+      cloudAccountId,
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || '生成分享链接失败');
   }
 };
 
@@ -393,7 +423,7 @@ export const sendChatMessageStream = async (
           errorMessage = errorData.error;
         }
       } catch (parseError) {
-        // Ignore parse error, use default message
+        console.debug('Failed to parse error response body:', parseError);
       }
 
       const error = new Error(errorMessage);
@@ -599,6 +629,7 @@ export const checkHealth = async () => {
     const response = await apiClient.get('/api/health');
     return response.data;
   } catch (error) {
+    console.error('Health check failed:', error);
     throw new Error('健康检查失败');
   }
 };
@@ -616,13 +647,16 @@ export const checkHealth = async () => {
  * @returns {Promise} Feedback result
  */
 export const submitFeedback = async (conversationId, requestId, feedbackType, reason = null, question = null, answer = null) => {
-  try {
-    // For now, just return success since we don't have a feedback endpoint
-    // You can implement this later if needed
-    return { success: true };
-  } catch (error) {
-    throw new Error('提交反馈失败');
-  }
+  void conversationId;
+  void requestId;
+  void feedbackType;
+  void reason;
+  void question;
+  void answer;
+
+  // For now, just return success since we don't have a feedback endpoint
+  // You can implement this later if needed
+  return { success: true };
 };
 
 // 默认导出 apiClient，用于在其他组件中直接使用

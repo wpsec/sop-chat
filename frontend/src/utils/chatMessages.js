@@ -3,6 +3,35 @@ const extractTextContent = (contents = []) => contents
   .map((content) => content.value || '')
   .join('');
 
+export const normalizeThreadPreview = (text = '', maxLength = 80) => {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+};
+
+export const extractFirstUserQuestionFromBackendMessages = (backendMessages = [], maxLength = 80) => {
+  for (const message of backendMessages) {
+    if ((message.role || '').toLowerCase() !== 'user') {
+      continue;
+    }
+
+    const preview = normalizeThreadPreview(extractTextContent(message.contents || []), maxLength);
+    if (preview) {
+      return preview;
+    }
+  }
+
+  return '';
+};
+
 const buildToolEvent = (tool = {}, timestampBase = Date.now()) => {
   const toolName = tool.name || 'unknown_tool';
   const toolStatus = tool.status || 'completed';

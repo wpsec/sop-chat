@@ -16,7 +16,7 @@ const ShareChat = () => {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const cloudAccountId = searchParams.get('cloudAccountId') || '';
+  const shareToken = searchParams.get('shareToken') || '';
 
   useEffect(() => {
     const loadData = async () => {
@@ -24,19 +24,16 @@ const ShareChat = () => {
         setLoading(true);
         setError(null);
 
-        // Load thread info (public API, no auth required)
-        const threadData = await getSharedThread(employeeName, threadId, cloudAccountId);
-        setThread(threadData);
-
-        // Load employee info (public API, no auth required)
-        const employeeData = await getSharedEmployee(employeeName, cloudAccountId);
-        setEmployee(employeeData);
-
-        // Load messages (public API, no auth required)
-        const messagesData = await getSharedThreadMessages(employeeName, threadId, cloudAccountId);
+        const [threadData, employeeData, messagesData] = await Promise.all([
+          getSharedThread(employeeName, threadId, shareToken),
+          getSharedEmployee(employeeName, shareToken),
+          getSharedThreadMessages(employeeName, threadId, shareToken),
+        ]);
         
         // Convert backend message format to frontend format
         const convertedMessages = convertBackendMessages(messagesData);
+        setThread(threadData);
+        setEmployee(employeeData);
         setMessages(convertedMessages);
       } catch (err) {
         console.error('Failed to load shared conversation:', err);
@@ -46,10 +43,16 @@ const ShareChat = () => {
       }
     };
 
+    if (!shareToken) {
+      setLoading(false);
+      setError('分享链接无效或已失效');
+      return;
+    }
+
     if (employeeName && threadId) {
       loadData();
     }
-  }, [employeeName, threadId, cloudAccountId]);
+  }, [employeeName, shareToken, threadId]);
 
   if (loading) {
     return (
@@ -77,6 +80,8 @@ const ShareChat = () => {
     return null;
   }
 
+  const sharedCloudAccountId = thread.cloudAccountId || employee.cloudAccountId || '';
+
   return (
     <div className="chat-window chat-window-shared">
       <div className="chat-header chat-header-shared">
@@ -94,8 +99,8 @@ const ShareChat = () => {
               // 在新窗口打开该SOP问答助手的新会话页面
               if (employeeName) {
                 const params = new URLSearchParams();
-                if (cloudAccountId) {
-                  params.set('cloudAccountId', cloudAccountId);
+                if (sharedCloudAccountId) {
+                  params.set('cloudAccountId', sharedCloudAccountId);
                 }
                 window.open(`/#/chat/${employeeName}${params.toString() ? `?${params.toString()}` : ''}`, '_blank');
               } else {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"sop-chat/internal/dingtalksdk/chatbot"
 	dingclient "sop-chat/internal/dingtalksdk/client"
 	"sop-chat/internal/dingtalksdk/openapi"
+	"sop-chat/internal/sharetoken"
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
 	"github.com/alibabacloud-go/tea/tea"
@@ -421,16 +421,18 @@ func (b *Bot) buildShareURL(route resolvedRoute, threadID string) string {
 	}
 	base = strings.TrimRight(base, "/")
 
-	values := url.Values{}
-	if cloudAccountID := config.NormalizeCloudAccountID(route.cloudAccountID); cloudAccountID != "" && cloudAccountID != config.DefaultCloudAccountID {
-		values.Set("cloudAccountId", cloudAccountID)
+	manager := sharetoken.NewManager(globalCfg.Auth.JWT.SecretKey, sharetoken.DefaultExpiresIn)
+	shareToken, _, err := manager.Generate(
+		employeeName,
+		threadID,
+		config.NormalizeCloudAccountID(route.cloudAccountID),
+	)
+	if err != nil {
+		log.Printf("[DingTalk] 生成分享 token 失败: %v", err)
+		return ""
 	}
 
-	shareURL := fmt.Sprintf("%s/#/share/%s/%s", base, url.PathEscape(employeeName), url.PathEscape(threadID))
-	if query := values.Encode(); query != "" {
-		shareURL += "?" + query
-	}
-	return shareURL
+	return sharetoken.BuildURL(base, employeeName, threadID, shareToken)
 }
 
 // onMessage 处理钉钉消息回调

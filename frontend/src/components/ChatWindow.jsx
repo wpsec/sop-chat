@@ -17,9 +17,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import Message from './Message';
 import MessageInput from './MessageInput';
-import { sendChatMessageStream, createThread, getEmployee, listThreads, getThreadMessages } from '../services/api';
+import { sendChatMessageStream, createThread, createShareLink, getEmployee, listThreads, getThreadMessages } from '../services/api';
 import { copyToClipboard } from '../utils/clipboard';
-import { convertBackendMessages } from '../utils/chatMessages';
+import {
+  convertBackendMessages,
+  normalizeThreadPreview,
+} from '../utils/chatMessages';
 
 const CANCEL_COMMANDS = new Set(['/取消', '/停止', '/abort']);
 const CANCELLED_ANALYSIS_MESSAGE = '已取消本次分析，你可以重新提问。';
@@ -83,14 +86,11 @@ const ChatWindow = () => {
     
     try {
       setThreadsLoading(true);
-      const threadList = await listThreads(employee.name, selectedCloudAccountId);
-      // Sort by createTime descending (newest first) and take only top 10
-      const sortedThreads = threadList.sort((a, b) => {
-        const timeA = a.createTime || 0;
-        const timeB = b.createTime || 0;
-        return timeB - timeA;
-      }).slice(0, 10); // Only take first 10 threads
-      setThreads(sortedThreads);
+      const threadList = await listThreads(employee.name, selectedCloudAccountId, {
+        limit: 10,
+        includeQuestionPreview: true,
+      });
+      setThreads(threadList);
     } catch (err) {
       console.error('Failed to load threads:', err);
     } finally {
@@ -285,10 +285,18 @@ const ChatWindow = () => {
     let currentThreadId = pendingConfirmation?.threadId || threadId;
     const requestMessage = pendingConfirmation?.originalMessage || content;
     const requestCloudAccountId = isCloudAccountConfirmation ? content : selectedCloudAccountId;
+    const questionPreview = !isCloudAccountConfirmation
+      ? normalizeThreadPreview(requestMessage)
+      : '';
 
     if (!currentThreadId) {
       try {
-        const threadData = await createThread(employee.name, '', {}, selectedCloudAccountId);
+        const threadData = await createThread(
+          employee.name,
+          questionPreview,
+          questionPreview ? { firstUserQuestion: questionPreview } : {},
+          selectedCloudAccountId
+        );
         currentThreadId = threadData.threadId;
         setThreadId(currentThreadId);
         // Reload thread list after creating new thread
@@ -350,8 +358,6 @@ const ChatWindow = () => {
       // onToolCall: handle tool call
       (toolName, args, status) => {
         // 使用 API 返回的 status 字段（start、success 或 fail）
-        const phase = status === 'start' ? 'start' : (status === 'fail' ? 'fail' : 'success');
-        
         if (status === 'start') {
           // Start 阶段：添加新事件
           // 确保 args 是对象格式，如果为空则使用空对象
@@ -365,7 +371,7 @@ const ChatWindow = () => {
               // 如果是字符串，尝试解析 JSON
               try {
                 normalizedArgs = JSON.parse(args);
-              } catch (e) {
+              } catch {
                 // 解析失败，使用原始值
                 normalizedArgs = { value: args };
               }
@@ -618,17 +624,18 @@ const ChatWindow = () => {
       return;
     }
     
-    // Generate share URL
     const baseUrl = window.location.href.split('#')[0];
-    const shareParams = new URLSearchParams();
-    if (selectedCloudAccountId) {
-      shareParams.set('cloudAccountId', selectedCloudAccountId);
-    }
-    const shareUrl = `${baseUrl}#/share/${encodeURIComponent(employee.name)}/${encodeURIComponent(threadId)}${shareParams.toString() ? `?${shareParams.toString()}` : ''}`;
-
-    // Copy to clipboard (robust fallback across browsers / contexts)
     (async () => {
       try {
+        const shareData = await createShareLink(employee.name, threadId, selectedCloudAccountId);
+        if (!shareData.shareToken) {
+          throw new Error('share_token_missing');
+        }
+
+        const shareParams = new URLSearchParams();
+        shareParams.set('shareToken', shareData.shareToken);
+        const shareUrl = `${baseUrl}#/share/${encodeURIComponent(employee.name)}/${encodeURIComponent(threadId)}?${shareParams.toString()}`;
+
         const ok = await copyToClipboard(shareUrl);
         if (!ok) {
           throw new Error('copy_failed');
@@ -644,9 +651,8 @@ const ChatWindow = () => {
           setShareCopied(false);
         }, 2000);
       } catch (err) {
-        console.error('Failed to copy share URL:', err);
-        // Fallback: show the URL in a prompt
-        prompt('分享链接（请手动复制）：', shareUrl);
+        console.error('Failed to create or copy share URL:', err);
+        alert('生成分享链接失败，请稍后重试');
       }
     })();
   };
@@ -670,8 +676,11 @@ const ChatWindow = () => {
 
   // Format thread title for display
   const formatThreadTitle = (thread) => {
-    if (thread.title && thread.title.trim()) {
-      return thread.title;
+    const questionPreview = typeof thread.questionPreview === 'string'
+      ? thread.questionPreview.trim()
+      : '';
+    if (questionPreview) {
+      return questionPreview;
     }
     if (thread.createTime) {
       const date = new Date(thread.createTime);
@@ -726,7 +735,7 @@ const ChatWindow = () => {
                     key={thread.threadId}
                     className={`thread-item ${thread.threadId === threadId ? 'active' : ''}`}
                     onClick={() => handleThreadSelect(thread.threadId)}
-                    title={thread.title || formatThreadTitle(thread)}
+                    title={formatThreadTitle(thread)}
                   >
                     <span className="thread-title">{formatThreadTitle(thread)}</span>
                   </button>

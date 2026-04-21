@@ -20,6 +20,7 @@ import (
 	"sop-chat/internal/feishu"
 	"sop-chat/internal/scheduler"
 	"sop-chat/internal/session"
+	"sop-chat/internal/sharetoken"
 	"sop-chat/internal/wecom"
 	"sop-chat/pkg/sopchat"
 
@@ -40,12 +41,14 @@ type Server struct {
 	authProvider   auth.Provider
 	authModes      []auth.AuthMode
 	jwtManager     *auth.JWTManager
+	shareManager   *sharetoken.Manager
 	userStore      auth.UserStore
 	authMiddleware *auth.AuthMiddleware
 	oidcHTTPClient *http.Client
 
-	oidcStateMu sync.Mutex
-	oidcStates  map[string]oidcAuthState
+	oidcStateMu        sync.Mutex
+	oidcStates         map[string]oidcAuthState
+	threadPreviewCache sync.Map
 
 	// 钉钉机器人生命周期管理（支持多实例热启停，keyed by clientId）
 	dingtalkMu   sync.Mutex
@@ -177,6 +180,7 @@ func (s *Server) initAuth() error {
 
 	// 始终创建 JWT 管理器（即使 methods 为空，token 验证中间件仍然生效）
 	s.jwtManager = auth.NewJWTManager(authConfig.JWTSecretKey, authConfig.JWTExpiresIn)
+	s.shareManager = sharetoken.NewManager(authConfig.JWTSecretKey, sharetoken.DefaultExpiresIn)
 
 	if len(s.authModes) == 0 {
 		// 登录功能关闭：不注册任何 Provider，JWT 中间件仍要求 token，
@@ -302,6 +306,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/threads/:employeeName", s.handleListThreads)
 			protected.GET("/threads/:employeeName/:threadId", s.handleGetThread)
 			protected.GET("/threads/:employeeName/:threadId/messages", s.handleGetThreadMessages)
+			protected.POST("/share-links", s.handleCreateShareLink)
 
 			// 聊天接口 (SSE 流式)
 			protected.POST("/chat/stream", s.handleChatStream)
