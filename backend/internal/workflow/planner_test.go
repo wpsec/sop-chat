@@ -34,6 +34,34 @@ func TestBuildPlanRoutesPodRestartToK8sThenBackend(t *testing.T) {
 	}
 }
 
+func TestBuildPlanUsesExecutableContractForProxyRestart(t *testing.T) {
+	root := buildTestWorkflowRepo(t)
+
+	plan, err := BuildPlan(root, "测试环境 Pod: sample-proxy-pod-abc 19:09 告警原因，为什么重启")
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	if plan == nil {
+		t.Fatalf("expected non-nil plan")
+	}
+	if plan.EntryModule == nil || plan.EntryModule.ID != "k8s-event" {
+		t.Fatalf("expected k8s entry module from executable contract, got %+v", plan.EntryModule)
+	}
+	if !containsModule(plan.HandoffModules, "proxy_gateway_accesslog") {
+		t.Fatalf("expected proxy/gateway runtime handoff, got %+v", plan.HandoffModules)
+	}
+	if !containsDataSource(plan.CandidateDataSources, "TEST-PROXY-RUNTIME") && !containsDataSource(plan.CandidateDataSources, "proxy-runtime") {
+		t.Fatalf("expected proxy runtime datasource, got %+v", plan.CandidateDataSources)
+	}
+	block := BuildPromptBlock(plan)
+	if !strings.Contains(block, "必须执行/判定步骤") {
+		t.Fatalf("expected prompt block to include executable workflow steps, got %q", block)
+	}
+	if !strings.Contains(block, "root_cause_evidence_status") {
+		t.Fatalf("expected prompt block to include root cause evidence status, got %q", block)
+	}
+}
+
 func TestBuildPlanRoutesDatabaseIssueToPostgreSQL(t *testing.T) {
 	root := buildTestWorkflowRepo(t)
 
@@ -73,11 +101,33 @@ func containsDataSource(items []DataSourcePlan, target string) bool {
 	return false
 }
 
+func containsModule(items []ModulePlan, target string) bool {
+	for _, item := range items {
+		if item.Name == target || item.ID == target {
+			return true
+		}
+	}
+	return false
+}
+
 func buildTestWorkflowRepo(t *testing.T) string {
 	t.Helper()
 
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "workflows", "overview.yaml"), `
+workflow_files:
+  - workflow_id: availability-troubleshooting
+    file: availability-troubleshooting.yaml
+    role: 可用性问题分析流程
+    intent_types: [availability, pod_restart]
+    entry_modules: [k8s-event]
+    alerts: ["POD异常重启-Error"]
+  - workflow_id: database-troubleshooting
+    file: database-troubleshooting.yaml
+    role: 数据库问题分析流程
+    intent_types: [database]
+    entry_modules: [postgresql]
+    alerts: ["近 15 分钟 PG 长事务"]
 files:
   - file: availability-troubleshooting.yaml
     role: 可用性问题分析流程
@@ -96,8 +146,32 @@ time_range_strategy:
     range: 告警时间前后 30 分钟
   database_alerts:
     range: 告警时间前后 1 小时
+time_window_policies:
+  availability:
+    range: 告警时间前后 30 分钟
+  database:
+    range: 告警时间前后 1 小时
 `)
 	mustWriteFile(t, filepath.Join(root, "workflows", "availability-troubleshooting.yaml"), `
+schema: sop.workflow.v1
+workflow_id: availability-troubleshooting
+title: 可用性告警根因分析工作流
+intent_types: [availability, pod_restart]
+entry_modules: [k8s-event]
+steps:
+  - id: inspect_k8s_event
+    kind: module_query
+    module: k8s-event
+    description: 先确认 direct_trigger
+    produces: [direct_trigger, workload_role]
+  - id: inspect_proxy_gateway_runtime
+    kind: conditional_module_query
+    module: proxy-gateway-accesslog
+    description: sample proxy CrashLoopBackOff 必须查 runtime stdout
+    run_if_any:
+      - pod_name contains [sample-proxy, sample-gateway]
+      - direct_trigger in [BackOff, CrashLoopBackOff]
+    produces: [proxy_runtime_evidence, root_cause_evidence_status]
 name: 可用性告警根因分析工作流
 description: 支持 Pod 重启、BackOff、探针失败
 trigger_conditions:
@@ -128,24 +202,57 @@ correlation_keys:
 log_sources:
   - name: k8s-event
     description: Kubernetes 事件日志
-    project: demo-k8s
+    project: test-k8s
     logstore: k8s-event
     fields:
       - name: pod_name
   - name: application
     description: backend 应用日志
-    project: demo-k8s
+    project: test-k8s
     logstore: backend-log
     fields:
       - name: trace_id
+  - name: proxy-runtime
+    description: Proxy runtime stdout
+    project: test-k8s
+    logstore: proxy-runtime-log
+    fields:
+      - name: pod_name
   - name: database-long-transaction
     description: PostgreSQL 长事务
-    project: demo-pg
+    project: test-pg
     logstore: pg-stat-activity
     fields:
       - name: 数据库名
 `)
 	mustWriteFile(t, filepath.Join(root, "k8s-event", "overview.yaml"), `
+schema: sop.module.v1
+module_id: k8s-event
+entry_hints:
+  keywords: [Pod重启, BackOff, CrashLoopBackOff]
+  object_inputs: [pod_name, namespace]
+execution:
+  primary_source:
+    source_alias: TEST-K8S-EVENT
+    project: test-k8s
+    logstore: k8s-event
+  produces: [direct_trigger, workload_role, root_cause_evidence_status]
+  evidence_requirements:
+    - BackOff 只能作为 direct_trigger
+    - 必须补 root_cause_evidence_status
+  handoff:
+    - target_module: proxy-gateway-accesslog
+      trigger_facts:
+        any_of:
+          - pod_name contains [sample-proxy, sample-gateway]
+          - direct_trigger in [BackOff, CrashLoopBackOff]
+      purpose: 查 proxy/gateway runtime stdout
+    - target_module: backend
+      trigger_facts:
+        any_of:
+          - pod_name contains [sample-app]
+          - k8s_message contains [Liveness probe failed]
+      purpose: 查 backend 启动失败日志
 module: k8s_runtime_event_log
 description: Kubernetes 运行事件分析入口
 task_routing_rules:
@@ -161,6 +268,30 @@ important_notes:
 core_fields_reference:
   - pod_name
   - reason
+`)
+	mustWriteFile(t, filepath.Join(root, "proxy-gateway-accesslog", "overview.yaml"), `
+schema: sop.module.v1
+module_id: proxy-gateway-accesslog
+entry_hints:
+  keywords: [proxy, gateway, sample-proxy, CrashLoopBackOff]
+execution:
+  primary_source:
+    source_alias: TEST-PROXY-GATEWAY
+    project: test-k8s
+    logstore_pattern: sample-proxy-gateway-stdout
+  alternate_sources:
+    - source_alias: TEST-PROXY-RUNTIME
+      project: test-k8s
+      logstore_pattern: "sample-proxy-stdout"
+  produces: [proxy_runtime_evidence, root_cause_evidence_status]
+  evidence_requirements:
+    - sample proxy CrashLoopBackOff 必须查 runtime stdout
+module: proxy_gateway_accesslog
+description: Proxy Gateway runtime and access log
+important_notes:
+  - BackOff 不是根因
+core_fields_reference:
+  - message
 `)
 	mustWriteFile(t, filepath.Join(root, "backend", "overview.yaml"), `
 module: backend_app_log

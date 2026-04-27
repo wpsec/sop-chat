@@ -34,34 +34,48 @@ var moduleSourceBoosts = map[string][]string{
 	"k8s_event":          {"k8s-event"},
 	"backend":            {"application"},
 	"backend_app":        {"application"},
-	"proxy":              {"accesslog"},
-	"gateway":            {"accesslog"},
+	"proxy":              {"accesslog", "proxy-runtime"},
+	"gateway":            {"accesslog", "proxy-runtime"},
 	"postgresql":         {"database-replication", "database-long-transaction"},
 	"postgresql_runtime": {"database-replication", "database-long-transaction"},
 }
 
 type Plan struct {
-	Root                 string            `json:"root"`
-	Summary              string            `json:"summary"`
-	Workflow             *WorkflowPlan     `json:"workflow,omitempty"`
-	EntryModule          *ModulePlan       `json:"entryModule,omitempty"`
-	HandoffModules       []ModulePlan      `json:"handoffModules,omitempty"`
-	CandidateDataSources []DataSourcePlan  `json:"candidateDataSources,omitempty"`
-	CorrelationKeys      []CorrelationPlan `json:"correlationKeys,omitempty"`
-	TimeWindow           string            `json:"timeWindow,omitempty"`
-	CommonSteps          []string          `json:"commonSteps,omitempty"`
-	EvidenceChecklist    []string          `json:"evidenceChecklist,omitempty"`
+	Root                 string             `json:"root"`
+	Summary              string             `json:"summary"`
+	Workflow             *WorkflowPlan      `json:"workflow,omitempty"`
+	WorkflowSteps        []WorkflowStepPlan `json:"workflowSteps,omitempty"`
+	EntryModule          *ModulePlan        `json:"entryModule,omitempty"`
+	HandoffModules       []ModulePlan       `json:"handoffModules,omitempty"`
+	CandidateDataSources []DataSourcePlan   `json:"candidateDataSources,omitempty"`
+	CorrelationKeys      []CorrelationPlan  `json:"correlationKeys,omitempty"`
+	TimeWindow           string             `json:"timeWindow,omitempty"`
+	CommonSteps          []string           `json:"commonSteps,omitempty"`
+	EvidenceChecklist    []string           `json:"evidenceChecklist,omitempty"`
 }
 
 type WorkflowPlan struct {
-	Name       string `json:"name"`
-	File       string `json:"file,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	TimeWindow string `json:"timeWindow,omitempty"`
+	Name         string   `json:"name"`
+	ID           string   `json:"id,omitempty"`
+	File         string   `json:"file,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	TimeWindow   string   `json:"timeWindow,omitempty"`
+	EntryModules []string `json:"entryModules,omitempty"`
+}
+
+type WorkflowStepPlan struct {
+	ID          string   `json:"id,omitempty"`
+	Kind        string   `json:"kind,omitempty"`
+	Module      string   `json:"module,omitempty"`
+	Description string   `json:"description,omitempty"`
+	DependsOn   []string `json:"dependsOn,omitempty"`
+	RunIfAny    []string `json:"runIfAny,omitempty"`
+	Produces    []string `json:"produces,omitempty"`
 }
 
 type ModulePlan struct {
 	Name        string   `json:"name"`
+	ID          string   `json:"id,omitempty"`
 	Path        string   `json:"path,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
@@ -95,16 +109,34 @@ type repository struct {
 }
 
 type workflowOverviewDoc struct {
-	Files             []workflowFileRef            `yaml:"files"`
-	CommonWorkflow    commonWorkflowDoc            `yaml:"common_workflow"`
-	TimeRangeStrategy map[string]timeRangeStrategy `yaml:"time_range_strategy"`
+	WorkflowFiles      []workflowFileRef            `yaml:"workflow_files"`
+	Files              []workflowFileRef            `yaml:"files"`
+	CommonExecution    commonExecutionDoc           `yaml:"common_execution"`
+	CommonWorkflow     commonWorkflowDoc            `yaml:"common_workflow"`
+	TimeWindowPolicies map[string]timeRangeStrategy `yaml:"time_window_policies"`
+	TimeRangeStrategy  map[string]timeRangeStrategy `yaml:"time_range_strategy"`
 }
 
 type workflowFileRef struct {
-	File   string   `yaml:"file"`
-	Role   string   `yaml:"role"`
-	Alerts []string `yaml:"alerts"`
-	Note   string   `yaml:"note"`
+	WorkflowID   string   `yaml:"workflow_id"`
+	File         string   `yaml:"file"`
+	Role         string   `yaml:"role"`
+	IntentTypes  []string `yaml:"intent_types"`
+	EntryModules []string `yaml:"entry_modules"`
+	Alerts       []string `yaml:"alerts"`
+	Note         string   `yaml:"note"`
+}
+
+type commonExecutionDoc struct {
+	Description string                `yaml:"description"`
+	Steps       []commonExecutionStep `yaml:"steps"`
+}
+
+type commonExecutionStep struct {
+	ID     string `yaml:"id"`
+	Kind   string `yaml:"kind"`
+	Title  string `yaml:"title"`
+	Action string `yaml:"action"`
 }
 
 type commonWorkflowDoc struct {
@@ -126,23 +158,89 @@ type workflowDoc struct {
 	File              string
 	Role              string
 	Alerts            []string
-	Name              string   `yaml:"name"`
-	Description       string   `yaml:"description"`
-	TriggerConditions []string `yaml:"trigger_conditions"`
-	TimeRange         string   `yaml:"time_range"`
+	RefWorkflowID     string
+	RefIntentTypes    []string
+	RefEntryModules   []string
+	Schema            string            `yaml:"schema"`
+	WorkflowID        string            `yaml:"workflow_id"`
+	Title             string            `yaml:"title"`
+	IntentTypes       []string          `yaml:"intent_types"`
+	EntryModules      []string          `yaml:"entry_modules"`
+	RequiredContext   []string          `yaml:"required_context"`
+	OptionalContext   []string          `yaml:"optional_context"`
+	ProducesFacts     []string          `yaml:"produces_facts"`
+	Steps             []workflowStepDoc `yaml:"steps"`
+	Name              string            `yaml:"name"`
+	Description       string            `yaml:"description"`
+	TriggerConditions []string          `yaml:"trigger_conditions"`
+	TimeRange         string            `yaml:"time_range"`
+}
+
+type workflowStepDoc struct {
+	ID          string   `yaml:"id"`
+	StepID      string   `yaml:"step_id"`
+	Kind        string   `yaml:"kind"`
+	Module      string   `yaml:"module"`
+	Description string   `yaml:"description"`
+	DependsOn   []string `yaml:"depends_on"`
+	RunIfAny    []string `yaml:"run_if_any"`
+	Produces    []string `yaml:"produces"`
 }
 
 type moduleDoc struct {
-	Name               string            `yaml:"module"`
-	Description        string            `yaml:"description"`
-	TaskRoutingRules   []routingRuleDoc  `yaml:"task_routing_rules"`
-	SupportedIntents   []intentRuleDoc   `yaml:"supported_intents"`
-	ImportantNotes     []string          `yaml:"important_notes"`
-	AnalysisDimensions []string          `yaml:"analysis_dimensions"`
-	CoreFields         []string          `yaml:"core_fields_reference"`
-	QuickLinks         map[string]string `yaml:"quick_links"`
+	Name               string             `yaml:"module"`
+	ModuleID           string             `yaml:"module_id"`
+	Description        string             `yaml:"description"`
+	EntryHints         entryHintsDoc      `yaml:"entry_hints"`
+	Execution          moduleExecutionDoc `yaml:"execution"`
+	TaskRoutingRules   []routingRuleDoc   `yaml:"task_routing_rules"`
+	SupportedIntents   []intentRuleDoc    `yaml:"supported_intents"`
+	ImportantNotes     []string           `yaml:"important_notes"`
+	AnalysisDimensions []string           `yaml:"analysis_dimensions"`
+	CoreFields         []string           `yaml:"core_fields_reference"`
+	QuickLinks         map[string]string  `yaml:"quick_links"`
 	Path               string
 	Keywords           []string
+}
+
+type entryHintsDoc struct {
+	Keywords     []string `yaml:"keywords"`
+	ObjectInputs []string `yaml:"object_inputs"`
+	Priority     string   `yaml:"priority"`
+}
+
+type moduleExecutionDoc struct {
+	RequiredInputs       inputSpecDoc       `yaml:"required_inputs"`
+	OptionalInputs       []string           `yaml:"optional_inputs"`
+	PrimarySource        moduleSourceDoc    `yaml:"primary_source"`
+	AlternateSources     []moduleSourceDoc  `yaml:"alternate_sources"`
+	Produces             []string           `yaml:"produces"`
+	EvidenceRequirements []string           `yaml:"evidence_requirements"`
+	Handoff              []moduleHandoffDoc `yaml:"handoff"`
+}
+
+type inputSpecDoc struct {
+	AnyOf []string `yaml:"any_of"`
+	AllOf []string `yaml:"all_of"`
+}
+
+type moduleSourceDoc struct {
+	SourceAlias     string `yaml:"source_alias"`
+	Project         string `yaml:"project"`
+	Logstore        string `yaml:"logstore"`
+	LogstorePattern string `yaml:"logstore_pattern"`
+	SourceRole      string `yaml:"source_role"`
+}
+
+type moduleHandoffDoc struct {
+	TargetModule string          `yaml:"target_module"`
+	TriggerFacts triggerFactsDoc `yaml:"trigger_facts"`
+	Purpose      string          `yaml:"purpose"`
+}
+
+type triggerFactsDoc struct {
+	AnyOf []string `yaml:"any_of"`
+	AllOf []string `yaml:"all_of"`
 }
 
 type routingRuleDoc struct {
@@ -271,6 +369,27 @@ func BuildPromptBlock(plan *Plan) string {
 		}
 	}
 
+	if len(plan.WorkflowSteps) > 0 {
+		parts := make([]string, 0, len(plan.WorkflowSteps))
+		for _, item := range plan.WorkflowSteps {
+			label := firstNonEmpty(item.ID, item.Kind, item.Module)
+			if item.Module != "" {
+				label += "@" + item.Module
+			}
+			if item.Description != "" {
+				label += "：" + item.Description
+			}
+			if len(item.RunIfAny) > 0 {
+				label += "；条件：" + strings.Join(item.RunIfAny, " / ")
+			}
+			if len(item.Produces) > 0 {
+				label += "；产出：" + strings.Join(item.Produces, "、")
+			}
+			parts = append(parts, label)
+		}
+		lines = append(lines, "必须执行/判定步骤："+strings.Join(parts, "；"))
+	}
+
 	if len(plan.CorrelationKeys) > 0 {
 		parts := make([]string, 0, len(plan.CorrelationKeys))
 		for _, item := range plan.CorrelationKeys {
@@ -299,7 +418,7 @@ func BuildPromptBlock(plan *Plan) string {
 	}
 
 	lines = append(lines,
-		"执行约束：先在入口模块拿到直接证据，再决定是否联动下游模块；证据不足时明确写待确认项，不要把候选方向当根因；输出时请显式区分直接触发器、应用侧原因、依赖侧原因和影响范围。",
+		"执行约束：按工作流步骤逐项标注已完成、跳过或证据不足；告警名称、阈值命中、状态码、事件 reason、错误数量、延迟指标等只能作为 direct_trigger 或 symptom_evidence，必须按 handoff 条件补 root_cause_evidence；证据不足时明确写待确认项，不要把候选方向当根因；输出时请显式区分直接触发器、根因证据状态、应用侧原因、依赖侧原因和影响范围。",
 	)
 
 	return strings.Join(lines, "\n")
@@ -318,20 +437,23 @@ func (r *repository) buildPlan(message string) *Plan {
 	if len(workflowMatches) > 0 {
 		top := workflowMatches[0]
 		plan.Workflow = &WorkflowPlan{
-			Name:       firstNonEmpty(top.doc.Name, top.doc.Role),
-			File:       top.doc.File,
-			Reason:     buildReason(top.matchedWords),
-			TimeWindow: firstNonEmpty(top.doc.TimeRange, plan.TimeWindow),
+			Name:         firstNonEmpty(top.doc.Title, top.doc.Name, top.doc.Role, top.doc.WorkflowID, top.doc.RefWorkflowID),
+			ID:           firstNonEmpty(top.doc.WorkflowID, top.doc.RefWorkflowID),
+			File:         top.doc.File,
+			Reason:       buildReason(top.matchedWords),
+			TimeWindow:   firstNonEmpty(top.doc.TimeRange, plan.TimeWindow),
+			EntryModules: firstNonEmptySlice(top.doc.EntryModules, top.doc.RefEntryModules),
 		}
+		plan.WorkflowSteps = workflowStepPlans(top.doc.Steps)
 		if plan.Workflow.TimeWindow != "" {
 			plan.TimeWindow = plan.Workflow.TimeWindow
 		}
 	}
 
-	if len(moduleMatches) > 0 {
-		entry := moduleMatches[0]
+	if entry, ok := r.selectEntryModuleMatch(plan.Workflow, moduleMatches); ok {
 		plan.EntryModule = &ModulePlan{
 			Name:        entry.doc.Name,
+			ID:          entry.doc.ModuleID,
 			Path:        entry.doc.Path,
 			Description: entry.doc.Description,
 			Reason:      buildReason(entry.matchedWords),
@@ -352,6 +474,24 @@ func (r *repository) buildPlan(message string) *Plan {
 }
 
 func (r *repository) commonSteps() []string {
+	if len(r.workflowOverview.CommonExecution.Steps) > 0 {
+		steps := make([]string, 0, len(r.workflowOverview.CommonExecution.Steps))
+		for _, item := range r.workflowOverview.CommonExecution.Steps {
+			title := strings.TrimSpace(item.Title)
+			action := strings.TrimSpace(item.Action)
+			kind := strings.TrimSpace(item.Kind)
+			switch {
+			case title != "" && action != "" && kind != "":
+				steps = append(steps, title+"("+kind+")："+action)
+			case title != "" && action != "":
+				steps = append(steps, title+"："+action)
+			case action != "":
+				steps = append(steps, action)
+			}
+		}
+		return capStrings(dedupeStrings(steps), 6)
+	}
+
 	steps := make([]string, 0, len(r.workflowOverview.CommonWorkflow.Steps))
 	for _, item := range r.workflowOverview.CommonWorkflow.Steps {
 		title := strings.TrimSpace(item.Title)
@@ -371,6 +511,11 @@ func (r *repository) commonSteps() []string {
 func (r *repository) defaultTimeWindow(matches []scoredWorkflow) string {
 	if len(matches) > 0 && strings.TrimSpace(matches[0].doc.TimeRange) != "" {
 		return strings.TrimSpace(matches[0].doc.TimeRange)
+	}
+	for _, key := range []string{"availability", "error", "performance", "database", "prometheus"} {
+		if item, ok := r.workflowOverview.TimeWindowPolicies[key]; ok && strings.TrimSpace(item.Range) != "" {
+			return strings.TrimSpace(item.Range)
+		}
 	}
 	for _, key := range []string{"availability_alerts", "error_alerts", "performance_alerts", "database_alerts", "prometheus_alerts"} {
 		if item, ok := r.workflowOverview.TimeRangeStrategy[key]; ok && strings.TrimSpace(item.Range) != "" {
@@ -413,6 +558,27 @@ func (r *repository) buildSummary(plan *Plan) string {
 	return strings.Join(parts, "；")
 }
 
+func (r *repository) selectEntryModuleMatch(workflow *WorkflowPlan, ranked []scoredModule) (scoredModule, bool) {
+	if len(ranked) == 0 {
+		return scoredModule{}, false
+	}
+	if workflow == nil || len(workflow.EntryModules) == 0 {
+		return ranked[0], true
+	}
+	for _, ref := range workflow.EntryModules {
+		doc, exists := r.lookupModule(ref)
+		if !exists {
+			continue
+		}
+		for _, item := range ranked {
+			if item.doc.Name == doc.Name {
+				return item, true
+			}
+		}
+	}
+	return ranked[0], true
+}
+
 func (r *repository) buildHandoffs(message string, entry *ModulePlan, ranked []scoredModule) []ModulePlan {
 	if entry == nil {
 		return nil
@@ -425,15 +591,44 @@ func (r *repository) buildHandoffs(message string, entry *ModulePlan, ranked []s
 
 	candidates := make([]ModulePlan, 0)
 	seen := map[string]struct{}{}
+
+	for _, handoff := range entryDoc.Execution.Handoff {
+		refDoc, exists := r.lookupModule(handoff.TargetModule)
+		if !exists {
+			continue
+		}
+		if _, duplicated := seen[refDoc.Name]; duplicated {
+			continue
+		}
+		ruleKeywords := extractKeywords(handoff.TargetModule, handoff.Purpose, strings.Join(handoff.TriggerFacts.AnyOf, " "), strings.Join(handoff.TriggerFacts.AllOf, " "))
+		ruleScore, matched := scoreKeywords(message, ruleKeywords)
+		if ruleScore == 0 {
+			for _, item := range ranked {
+				if item.doc.Name == refDoc.Name && item.score > 0 {
+					ruleScore = item.score
+					matched = item.matchedWords
+					break
+				}
+			}
+		}
+		if ruleScore == 0 {
+			continue
+		}
+		seen[refDoc.Name] = struct{}{}
+		candidates = append(candidates, ModulePlan{
+			Name:        refDoc.Name,
+			ID:          refDoc.ModuleID,
+			Path:        refDoc.Path,
+			Description: refDoc.Description,
+			Reason:      firstNonEmpty(buildReason(capStrings(matched, 4)), handoff.Purpose),
+			Keywords:    capStrings(refDoc.Keywords, 6),
+		})
+	}
+
 	for _, rule := range entryDoc.TaskRoutingRules {
 		joinedActions := strings.Join(rule.Action, " ")
 		for _, ref := range extractModuleRefs(rule.Condition, joinedActions) {
-			refDoc, exists := r.modules[ref]
-			if !exists {
-				if mappedName, mapped := r.moduleDirs[ref]; mapped {
-					refDoc, exists = r.modules[mappedName]
-				}
-			}
+			refDoc, exists := r.lookupModule(ref)
 			if !exists {
 				continue
 			}
@@ -457,6 +652,7 @@ func (r *repository) buildHandoffs(message string, entry *ModulePlan, ranked []s
 			seen[refDoc.Name] = struct{}{}
 			candidates = append(candidates, ModulePlan{
 				Name:        refDoc.Name,
+				ID:          refDoc.ModuleID,
 				Path:        refDoc.Path,
 				Description: refDoc.Description,
 				Reason:      buildReason(capStrings(matched, 4)),
@@ -472,6 +668,41 @@ func (r *repository) buildHandoffs(message string, entry *ModulePlan, ranked []s
 }
 
 func (r *repository) buildDataSources(message string, entry *ModulePlan, handoffs []ModulePlan) []DataSourcePlan {
+	result := make([]DataSourcePlan, 0, 6)
+	addSource := func(source moduleSourceDoc, reason string) {
+		name := strings.TrimSpace(firstNonEmpty(source.SourceAlias, source.Logstore, source.LogstorePattern))
+		if name == "" {
+			return
+		}
+		result = append(result, DataSourcePlan{
+			Name:            name,
+			Project:         strings.TrimSpace(source.Project),
+			Logstore:        strings.TrimSpace(source.Logstore),
+			LogstorePattern: strings.TrimSpace(source.LogstorePattern),
+			Reason:          reason,
+		})
+	}
+	addModuleSources := func(moduleName, reason string) {
+		if moduleName == "" {
+			return
+		}
+		doc, ok := r.modules[moduleName]
+		if !ok {
+			return
+		}
+		addSource(doc.Execution.PrimarySource, reason)
+		for _, source := range doc.Execution.AlternateSources {
+			addSource(source, reason)
+		}
+	}
+
+	if entry != nil {
+		addModuleSources(entry.Name, "来自入口模块 primary_source")
+	}
+	for _, handoff := range handoffs {
+		addModuleSources(handoff.Name, "来自联动模块 primary_source")
+	}
+
 	matches := make([]scoredLogSource, 0, len(r.logSources))
 	for _, item := range r.logSources {
 		keywords := extractKeywords(item.Name, item.Description, strings.Join(fieldNames(item.Fields), " "))
@@ -495,7 +726,6 @@ func (r *repository) buildDataSources(message string, entry *ModulePlan, handoff
 		return matches[i].score > matches[j].score
 	})
 
-	result := make([]DataSourcePlan, 0, min(3, len(matches)))
 	for _, item := range matches[:min(3, len(matches))] {
 		result = append(result, DataSourcePlan{
 			Name:            item.doc.Name,
@@ -505,7 +735,7 @@ func (r *repository) buildDataSources(message string, entry *ModulePlan, handoff
 			Reason:          buildReason(capStrings(item.matchedWords, 4)),
 		})
 	}
-	return result
+	return capDataSourcePlans(dedupeDataSources(result), 5)
 }
 
 func (r *repository) buildCorrelationKeys(message string, entry *ModulePlan, handoffs []ModulePlan, sources []DataSourcePlan) []CorrelationPlan {
@@ -569,11 +799,13 @@ func (r *repository) buildEvidenceChecklist(entry *ModulePlan, handoffs []Module
 
 	if entry != nil {
 		if doc, ok := r.modules[entry.Name]; ok {
+			items = append(items, capStrings(doc.Execution.EvidenceRequirements, 4)...)
 			items = append(items, capStrings(doc.CoreFields, 3)...)
 		}
 	}
 	for _, handoff := range handoffs {
 		if doc, ok := r.modules[handoff.Name]; ok {
+			items = append(items, capStrings(doc.Execution.EvidenceRequirements, 2)...)
 			items = append(items, capStrings(doc.CoreFields, 1)...)
 		}
 	}
@@ -584,7 +816,28 @@ func (r *repository) buildEvidenceChecklist(entry *ModulePlan, handoffs []Module
 func (r *repository) matchWorkflows(message string) []scoredWorkflow {
 	matches := make([]scoredWorkflow, 0, len(r.workflows))
 	for _, item := range r.workflows {
-		keywords := extractKeywords(item.Name, item.Role, item.Description, strings.Join(item.TriggerConditions, " "), strings.Join(item.Alerts, " "))
+		stepTexts := make([]string, 0, len(item.Steps))
+		for _, step := range item.Steps {
+			stepTexts = append(stepTexts, step.ID, step.StepID, step.Kind, step.Module, step.Description, strings.Join(step.RunIfAny, " "), strings.Join(step.Produces, " "))
+		}
+		keywords := extractKeywords(
+			item.WorkflowID,
+			item.RefWorkflowID,
+			item.Title,
+			item.Name,
+			item.Role,
+			item.Description,
+			strings.Join(item.IntentTypes, " "),
+			strings.Join(item.RefIntentTypes, " "),
+			strings.Join(item.EntryModules, " "),
+			strings.Join(item.RefEntryModules, " "),
+			strings.Join(item.RequiredContext, " "),
+			strings.Join(item.OptionalContext, " "),
+			strings.Join(item.ProducesFacts, " "),
+			strings.Join(item.TriggerConditions, " "),
+			strings.Join(item.Alerts, " "),
+			strings.Join(stepTexts, " "),
+		)
 		score, matched := scoreKeywords(message, keywords)
 		if score == 0 {
 			continue
@@ -660,12 +913,20 @@ func loadRepositoryFromDisk(root string) (*repository, error) {
 		return nil, err
 	}
 
-	repo.workflows = make([]workflowDoc, 0, len(repo.workflowOverview.Files))
-	for _, item := range repo.workflowOverview.Files {
+	workflowRefs := repo.workflowOverview.WorkflowFiles
+	if len(workflowRefs) == 0 {
+		workflowRefs = repo.workflowOverview.Files
+	}
+
+	repo.workflows = make([]workflowDoc, 0, len(workflowRefs))
+	for _, item := range workflowRefs {
 		doc := workflowDoc{
-			File:   item.File,
-			Role:   item.Role,
-			Alerts: item.Alerts,
+			File:            item.File,
+			Role:            item.Role,
+			Alerts:          item.Alerts,
+			RefWorkflowID:   item.WorkflowID,
+			RefIntentTypes:  item.IntentTypes,
+			RefEntryModules: item.EntryModules,
 		}
 		if err := readYAML(filepath.Join(root, "workflows", item.File), &doc); err != nil {
 			return nil, err
@@ -718,6 +979,9 @@ func loadRepositoryFromDisk(root string) (*repository, error) {
 		if strings.TrimSpace(doc.Name) == "" {
 			continue
 		}
+		if strings.TrimSpace(doc.ModuleID) != "" {
+			repo.moduleDirs[doc.ModuleID] = doc.Name
+		}
 		doc.Path = overviewPath
 		doc.Keywords = buildModuleKeywords(doc, entry.Name())
 		repo.modules[doc.Name] = doc
@@ -740,8 +1004,68 @@ func readYAML(path string, target interface{}) error {
 	return nil
 }
 
+func (r *repository) lookupModule(ref string) (moduleDoc, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return moduleDoc{}, false
+	}
+	if doc, ok := r.modules[ref]; ok {
+		return doc, true
+	}
+	if mappedName, ok := r.moduleDirs[ref]; ok {
+		doc, exists := r.modules[mappedName]
+		return doc, exists
+	}
+	return moduleDoc{}, false
+}
+
+func workflowStepPlans(items []workflowStepDoc) []WorkflowStepPlan {
+	result := make([]WorkflowStepPlan, 0, min(len(items), 8))
+	for _, item := range items {
+		id := firstNonEmpty(item.ID, item.StepID)
+		if id == "" && item.Kind == "" && item.Module == "" && item.Description == "" {
+			continue
+		}
+		result = append(result, WorkflowStepPlan{
+			ID:          id,
+			Kind:        strings.TrimSpace(item.Kind),
+			Module:      strings.TrimSpace(item.Module),
+			Description: strings.TrimSpace(item.Description),
+			DependsOn:   capStrings(item.DependsOn, 4),
+			RunIfAny:    capStrings(item.RunIfAny, 4),
+			Produces:    capStrings(item.Produces, 6),
+		})
+		if len(result) >= 8 {
+			break
+		}
+	}
+	return result
+}
+
 func buildModuleKeywords(doc moduleDoc, dirName string) []string {
-	texts := []string{doc.Name, dirName, doc.Description}
+	texts := []string{
+		doc.Name,
+		doc.ModuleID,
+		dirName,
+		doc.Description,
+		strings.Join(doc.EntryHints.Keywords, " "),
+		strings.Join(doc.EntryHints.ObjectInputs, " "),
+		doc.EntryHints.Priority,
+		strings.Join(doc.Execution.RequiredInputs.AnyOf, " "),
+		strings.Join(doc.Execution.RequiredInputs.AllOf, " "),
+		strings.Join(doc.Execution.OptionalInputs, " "),
+		doc.Execution.PrimarySource.SourceAlias,
+		doc.Execution.PrimarySource.Logstore,
+		doc.Execution.PrimarySource.LogstorePattern,
+		strings.Join(doc.Execution.Produces, " "),
+		strings.Join(doc.Execution.EvidenceRequirements, " "),
+	}
+	for _, source := range doc.Execution.AlternateSources {
+		texts = append(texts, source.SourceAlias, source.Logstore, source.LogstorePattern, source.SourceRole)
+	}
+	for _, handoff := range doc.Execution.Handoff {
+		texts = append(texts, handoff.TargetModule, handoff.Purpose, strings.Join(handoff.TriggerFacts.AnyOf, " "), strings.Join(handoff.TriggerFacts.AllOf, " "))
+	}
 	for _, item := range doc.TaskRoutingRules {
 		texts = append(texts, item.Condition)
 		texts = append(texts, strings.Join(item.Action, " "))
@@ -929,11 +1253,11 @@ func moduleIntentBoost(message, moduleName string) int {
 	boost := 0
 	switch {
 	case strings.Contains(normalizedModule, "k8s"):
-		boost += keywordGroupScore(normalizedMessage, "pod", "namespace", "oom", "backoff", "crashloopbackoff", "unhealthy", "重启", "探针", "调度", "驱逐")
+		boost += keywordGroupScore(normalizedMessage, "pod", "namespace", "oom", "backoff", "crashloopbackoff", "unhealthy", "重启", "探针", "调度", "驱逐", "告警原因", "为什么")
 	case strings.Contains(normalizedModule, "backend"):
 		boost += keywordGroupScore(normalizedMessage, "backend", "error", "warn", "trace", "接口", "报错", "异常", "类方法", "日志")
 	case strings.Contains(normalizedModule, "proxy"), strings.Contains(normalizedModule, "gateway"):
-		boost += keywordGroupScore(normalizedMessage, "gateway", "status", "5xx", "4xx", "请求", "uri", "回源", "网关", "慢请求")
+		boost += keywordGroupScore(normalizedMessage, "gateway", "proxy", "nginx", "deploy-proxy", "deploy-gateway", "status", "5xx", "4xx", "请求", "uri", "回源", "网关", "慢请求")
 	case strings.Contains(normalizedModule, "postgresql"):
 		boost += keywordGroupScore(normalizedMessage, "postgres", "pg", "数据库", "长事务", "复制槽", "wal", "slot", "等待事件", "连接")
 	}
@@ -1052,6 +1376,43 @@ func capModulePlans(values []ModulePlan, limit int) []ModulePlan {
 		return values
 	}
 	return append([]ModulePlan(nil), values[:limit]...)
+}
+
+func capDataSourcePlans(values []DataSourcePlan, limit int) []DataSourcePlan {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return append([]DataSourcePlan(nil), values[:limit]...)
+}
+
+func dedupeDataSources(values []DataSourcePlan) []DataSourcePlan {
+	result := make([]DataSourcePlan, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		key := strings.TrimSpace(value.Name + "|" + value.Project + "|" + value.Logstore + "|" + value.LogstorePattern)
+		if key == "|||" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func firstNonEmptySlice(groups ...[]string) []string {
+	for _, values := range groups {
+		if len(values) == 0 {
+			continue
+		}
+		cleaned := dedupeStrings(values)
+		if len(cleaned) > 0 {
+			return cleaned
+		}
+	}
+	return nil
 }
 
 func min(a, b int) int {
