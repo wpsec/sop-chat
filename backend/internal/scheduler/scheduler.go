@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"sop-chat/internal/client"
 	"sop-chat/internal/config"
+	"sop-chat/internal/session"
 	"sop-chat/pkg/sopchat"
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
@@ -223,12 +223,7 @@ func queryEmployee(clientCfg *config.ClientConfig, taskName, employeeName, messa
 	msgShort := promptForLog(message, 300)
 	log.Printf("[Scheduler] queryEmployee 开始: task=%q employee=%q product=%q 问题=%s", taskName, employeeName, product, msgLog)
 
-	sopClient, err := client.NewCMSClient(&client.Config{
-		CloudAccountID:  clientCfg.CloudAccountID,
-		AccessKeyId:     clientCfg.AccessKeyId,
-		AccessKeySecret: clientCfg.AccessKeySecret,
-		Endpoint:        clientCfg.Endpoint,
-	})
+	sopClient, err := session.CachedSopClient(clientCfg)
 	if err != nil {
 		log.Printf("[Scheduler] queryEmployee product=%q 问题=%s 创建 CMS 客户端失败: %v", product, msgShort, err)
 		return "", fmt.Errorf("创建 CMS 客户端失败: %w", err)

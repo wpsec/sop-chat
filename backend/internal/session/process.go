@@ -18,6 +18,11 @@ func SetBindThreadToProcess(enabled bool) {
 	includeProcessStartInSessionHash.Store(enabled)
 }
 
+// BindThreadToProcessEnabled reports whether thread sessions are scoped to this process.
+func BindThreadToProcessEnabled() bool {
+	return includeProcessStartInSessionHash.Load()
+}
+
 // ProcessStartToken 返回当前进程启动时固定的 token。
 func ProcessStartToken() string {
 	return strconv.FormatInt(processStartUnixNano, 10)

@@ -556,7 +556,7 @@ func (b *Bot) newSopClientWithConfig(clientCfg *config.ClientConfig) (*sopchat.C
 	if clientCfg == nil {
 		return nil, fmt.Errorf("CMS 客户端配置为空")
 	}
-	return session.NewSopClient(clientCfg)
+	return session.CachedSopClient(clientCfg)
 }
 
 // threadVariable 根据 product 返回需要写入 Thread Variables 的值

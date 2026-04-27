@@ -698,7 +698,7 @@ func (b *LongConnBot) newSopClientWithConfig(clientCfg *config.ClientConfig) (*s
 	if clientCfg == nil {
 		return nil, fmt.Errorf("CMS 客户端配置为空")
 	}
-	return session.NewSopClient(clientCfg)
+	return session.CachedSopClient(clientCfg)
 }
 
 // queryEmployee 向 CMS 数字员工发送消息，返回回复文本和线程 ID

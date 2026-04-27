@@ -25,8 +25,6 @@ import (
 	"sop-chat/pkg/sopchat"
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
-	openapiutil "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
-	"github.com/alibabacloud-go/tea/tea"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -548,28 +546,14 @@ func resolveClientConfigForMessage(globalCfg *config.Config, explicitCloudAccoun
 }
 
 func buildRawCMSClient(cfg *config.ClientConfig) (*cmsclient.Client, error) {
-	if cfg == nil || cfg.AccessKeyId == "" || cfg.AccessKeySecret == "" {
-		return nil, fmt.Errorf("cloud credentials are empty")
-	}
-	cmsConfig := &openapiutil.Config{
-		AccessKeyId:      tea.String(cfg.AccessKeyId),
-		AccessKeySecret:  tea.String(cfg.AccessKeySecret),
-		Endpoint:         tea.String(cfg.Endpoint),
-		SignatureVersion: tea.String("v3"),
-	}
-	return cmsclient.NewClient(cmsConfig)
+	return session.CachedRawCMSClient(cfg)
 }
 
 func newSOPChatClientFromClientConfig(cfg *config.ClientConfig) (*sopchat.Client, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("client config is nil")
 	}
-	return client.NewCMSClient(&client.Config{
-		CloudAccountID:  cfg.CloudAccountID,
-		AccessKeyId:     cfg.AccessKeyId,
-		AccessKeySecret: cfg.AccessKeySecret,
-		Endpoint:        cfg.Endpoint,
-	})
+	return session.CachedSopClient(cfg)
 }
 
 // syncDingTalkBots 将运行中的机器人与新配置列表对齐：
@@ -1019,7 +1003,12 @@ func (s *Server) createClientForCloudAccount(cloudAccountID string) (*sopchat.Cl
 	if cfg == nil || cfg.AccessKeyId == "" {
 		return nil, fmt.Errorf("凭据未配置，请先通过配置 UI 设置 cloudAccounts")
 	}
-	return client.NewCMSClient(cfg)
+	return newSOPChatClientFromClientConfig(&config.ClientConfig{
+		CloudAccountID:  cfg.CloudAccountID,
+		AccessKeyId:     cfg.AccessKeyId,
+		AccessKeySecret: cfg.AccessKeySecret,
+		Endpoint:        cfg.Endpoint,
+	})
 }
 
 // createCMSClient 创建 SDK 的 CMS 客户端（用于直接调用 SDK）
