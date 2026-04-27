@@ -1560,8 +1560,8 @@ function makeDingTalkBotCard(bot, idx) {
           '<span class="toggle-thumb"></span>' +
         '</label>' +
         '<div style="display:flex;flex-direction:column;gap:2px">' +
-          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">关闭后按完整 SOP 风格回答</span></span>' +
-          '<span class="hint" style="margin:0">开启后回复内容更精简，适合在 IM 中直接阅读</span>' +
+          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">本轮可用“简洁回复/详细分析”覆盖</span></span>' +
+          '<span class="hint" style="margin:0">开启后默认更精简；关闭后默认按完整 SOP 风格回答</span>' +
         '</div>' +
       '</div>' +
       '<div class="field field-full" style="flex-direction:row;align-items:center;gap:10px;padding-top:2px">' +
@@ -1903,8 +1903,8 @@ function makeFeishuBotCard(bot, idx) {
           '<span class="toggle-thumb"></span>' +
         '</label>' +
         '<div style="display:flex;flex-direction:column;gap:2px">' +
-          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">关闭后按完整 SOP 风格回答</span></span>' +
-          '<span class="hint" style="margin:0">开启后回复内容更精简，适合在 IM 中直接阅读</span>' +
+          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">本轮可用“简洁回复/详细分析”覆盖</span></span>' +
+          '<span class="hint" style="margin:0">开启后默认更精简；关闭后默认按完整 SOP 风格回答</span>' +
         '</div>' +
       '</div>' +
       '<div class="field field-full">' +
@@ -2084,8 +2084,8 @@ function makeWeComBotCard(bot, idx) {
           '<span class="toggle-thumb"></span>' +
         '</label>' +
         '<div style="display:flex;flex-direction:column;gap:2px">' +
-          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">关闭后按完整 SOP 风格回答</span></span>' +
-          '<span class="hint" style="margin:0">开启后回复内容更精简，适合在 IM 中直接阅读</span>' +
+          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">本轮可用“简洁回复/详细分析”覆盖</span></span>' +
+          '<span class="hint" style="margin:0">开启后默认更精简；关闭后默认按完整 SOP 风格回答</span>' +
         '</div>' +
       '</div>' +
       '<div class="field field-full">' +
@@ -2301,8 +2301,8 @@ function makeWeComGroupBotCard(bot, idx) {
           '<span class="toggle-thumb"></span>' +
         '</label>' +
         '<div style="display:flex;flex-direction:column;gap:2px">' +
-          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">关闭后按完整 SOP 风格回答</span></span>' +
-          '<span class="hint" style="margin:0">开启后回复内容更精简，适合在 IM 中直接阅读</span>' +
+          '<span style="font-size:13px;font-weight:500;color:var(--text)">简洁回复 <span class="hint">本轮可用“简洁回复/详细分析”覆盖</span></span>' +
+          '<span class="hint" style="margin:0">开启后默认更精简；关闭后默认按完整 SOP 风格回答</span>' +
         '</div>' +
       '</div>' +
       makeCloudRouteDetails(bot.cloudAccountRoutes, '云账号路由', '（按 cloudAccountId 切换不同数字员工）') +
@@ -2725,7 +2725,7 @@ function makeTaskCard(task, idx, expanded) {
             '<span class="toggle-track"></span>' +
             '<span class="toggle-thumb"></span>' +
           '</label>' +
-          '<span style="font-size:12px;color:var(--text2)">简洁输出 <span class="hint">（追加指令让回复更简短，适合 IM 阅读）</span></span>' +
+          '<span style="font-size:12px;color:var(--text2)">简洁输出 <span class="hint">（默认更简短；Prompt 可用“详细分析/完整分析”临时覆盖）</span></span>' +
         '</div>' +
       '</div>' +
       '<div class="field field-full" style="margin-bottom:0">' +

@@ -149,7 +149,7 @@ auth:
 #       clientSecret: "$DINGTALK_CLIENT_SECRET_1"
 #       employeeName: "employee-name-1"
 #       cloudAccountId: "default"   # 绑定云账号（默认 default）
-#       conciseReply: true        # true=简洁 IM 风格；false=按完整 SOP 风格回答
+#       conciseReply: true        # true=默认简洁 IM 风格；false=默认完整 SOP 风格；本轮问题可用“简洁回复/详细分析”覆盖
 #       progressFeedback: true    # true=发送阶段反馈；false=仅发送开始提示和最终回答（默认 true）
 #       product: "sls"            # 数字员工对应的 product（建议显式配置）
 #       project: ""               # SLS 产品：数字员工所属 project（product=sls 时生效，写入 Thread Variables）
@@ -174,7 +174,7 @@ auth:
 #       appSecret: "$FEISHU_APP_SECRET"   # 飞书应用 App Secret
 #       employeeName: "employee-name-1"
 #       cloudAccountId: "default"   # 绑定云账号（默认 default）
-#       conciseReply: true        # true=简洁 IM 风格；false=按完整 SOP 风格回答
+#       conciseReply: true        # true=默认简洁 IM 风格；false=默认完整 SOP 风格；本轮问题可用“简洁回复/详细分析”覆盖
 #       product: "sls"            # 数字员工对应的 product（建议显式配置）
 #       project: ""               # SLS 产品：数字员工所属 project（product=sls 时生效，写入 Thread Variables）
 #       workspace: ""             # CMS 产品：数字员工所属 workspace（product=cms 时生效，写入 Thread Variables）
@@ -196,7 +196,7 @@ auth:
 #       callbackPath: "/wecom/callback"   # 回调路径（必须以 /wecom/ 开头）
 #       employeeName: "employee-name-1"
 #       cloudAccountId: "default"   # 绑定云账号（默认 default）
-#       conciseReply: true        # true=简洁 IM 风格；false=按完整 SOP 风格回答
+#       conciseReply: true        # true=默认简洁 IM 风格；false=默认完整 SOP 风格；本轮问题可用“简洁回复/详细分析”覆盖
 #       product: "sls"            # 数字员工对应的 product（建议显式配置）
 #       project: ""               # SLS 产品：数字员工所属 project（product=sls 时生效，写入 Thread Variables）
 #       workspace: ""             # CMS 产品：数字员工所属 workspace（product=cms 时生效，写入 Thread Variables）
@@ -217,7 +217,7 @@ auth:
 #       botSecret: "$WECOM_BOT_SECRET"    # 机器人 Secret
 #       employeeName: "employee-name-1"   # 默认数字员工名称
 #       cloudAccountId: "default"   # 绑定云账号（默认 default）
-#       conciseReply: true        # true=简洁 IM 风格；false=按完整 SOP 风格回答
+#       conciseReply: true        # true=默认简洁 IM 风格；false=默认完整 SOP 风格；本轮问题可用“简洁回复/详细分析”覆盖
 #       product: "sls"            # 数字员工对应的 product（建议显式配置）
 #       project: ""               # SLS 产品：数字员工所属 project（product=sls 时生效，写入 Thread Variables）
 #       workspace: ""             # CMS 产品：数字员工所属 workspace（product=cms 时生效，写入 Thread Variables）

@@ -26,7 +26,7 @@ func Prepare(globalCfg *config.Config, message string, concise bool, timeZone, l
 	}
 
 	return &PreparedRequest{
-		Message:   config.ApplyReplyStyleInstruction(enrichedMessage, concise, ctx.Product),
+		Message:   config.ApplyReplyStyleInstructionWithSource(enrichedMessage, trimmed, concise, ctx.Product),
 		Variables: BuildVariables(timeZone, language, ctx),
 		Plan:      plan,
 	}, planErr

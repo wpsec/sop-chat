@@ -94,7 +94,7 @@ function Login() {
   const hasOIDCLogin = !!setupStatus.oidcAvailable;
   const loginReady = !!setupStatus.loginReady || (setupStatus.authConfigured && (hasBuiltinLogin || hasOIDCLogin));
   const notConfigured = !loginReady;
-  const versionDisplay = setupStatus.versionDisplay || setupStatus.version || 'v0.3.0-beta.2';
+  const versionDisplay = setupStatus.versionDisplay || setupStatus.version || 'v0.3.0-beta.3';
   const activeMode = hasBuiltinLogin && hasOIDCLogin
     ? selectedMode
     : (hasOIDCLogin ? 'oidc' : 'builtin');

@@ -503,28 +503,107 @@ func MergeProductContext(base ProductContext, product, project, workspace, regio
 	return ctx
 }
 
-// ApplyReplyStyleInstruction 根据 conciseReply 和产品类型附加消息风格提示。
+// ApplyReplyStyleInstruction 根据 conciseReply、用户显式指令和产品类型附加消息风格提示。
 func ApplyReplyStyleInstruction(message string, conciseReply bool, product string) string {
+	return ApplyReplyStyleInstructionWithSource(message, message, conciseReply, product)
+}
+
+// ApplyReplyStyleInstructionWithSource 使用 originalMessage 判定本轮回复风格，
+// 避免 workflow 补充 prompt 中的文字影响用户显式指令识别。
+func ApplyReplyStyleInstructionWithSource(message, originalMessage string, conciseReply bool, product string) string {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
 		return ""
 	}
 
+	effectiveConciseReply := ResolveConciseReply(originalMessage, conciseReply)
 	message = trimmed + AntiHallucinationBaselineInstruction
 	if IsHighRiskQuestion(trimmed) {
-		if conciseReply {
+		if effectiveConciseReply {
 			message += HighRiskStructuredConciseInstruction
 		} else {
 			message += HighRiskStructuredReplyInstruction
 		}
 	}
-	if conciseReply {
+	if effectiveConciseReply {
 		return message + ConciseReplyInstruction
 	}
 	if IsSlsProduct(product) {
 		return message + StandardSOPReplyInstruction
 	}
 	return message
+}
+
+// ResolveConciseReply 返回当前问题最终是否使用简洁回复。
+// 用户显式要求完整分析时优先级最高，其次是显式简洁要求，最后才是配置默认值。
+func ResolveConciseReply(message string, defaultConcise bool) bool {
+	normalized := normalizeReplyStyleDirectiveText(message)
+	if normalized == "" {
+		return defaultConcise
+	}
+	if containsAny(normalized, fullReplyDirectiveKeywords) {
+		return false
+	}
+	if containsAny(normalized, conciseReplyDirectiveKeywords) {
+		return true
+	}
+	return defaultConcise
+}
+
+var fullReplyDirectiveKeywords = []string{
+	"不要简洁回复",
+	"不要简要回复",
+	"不要简单回复",
+	"不需要简洁回复",
+	"不需要简要回复",
+	"不需要简单回复",
+	"关闭简洁回复",
+	"完整回复",
+	"完整回答",
+	"完整分析",
+	"完整报告",
+	"详细回复",
+	"详细回答",
+	"详细分析",
+	"按sop模板",
+	"按sop模版",
+	"按sop规定模板",
+	"按sop规定模版",
+	"按sop报告模板",
+	"按sop报告模版",
+	"按报告模板",
+	"按报告模版",
+}
+
+var conciseReplyDirectiveKeywords = []string{
+	"简洁回复",
+	"简洁回答",
+	"简要回复",
+	"简要回答",
+	"简单回复",
+	"简单回答",
+	"简短回复",
+	"简短回答",
+	"简单说",
+	"长话短说",
+	"简明扼要",
+}
+
+func normalizeReplyStyleDirectiveText(message string) string {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(normalized), "")
+}
+
+func containsAny(value string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(value, strings.ToLower(strings.Join(strings.Fields(keyword), ""))) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsHighRiskQuestion 判断问题是否属于高风险问答，需要更保守的结构化回答。

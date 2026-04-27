@@ -102,7 +102,7 @@ func TestHandleGetSetupStatusReportsLoginReadySeparately(t *testing.T) {
 	if !resp.BuiltinAvailable || resp.BuiltinStorage != "sqlite" || resp.BuiltinUserCount != 1 {
 		t.Fatalf("unexpected builtin status: %+v", resp)
 	}
-	if resp.Version != "v0.3.0-beta.2" {
+	if resp.Version != "v0.3.0-beta.3" {
 		t.Fatalf("expected base version to be returned, got %+v", resp)
 	}
 	if resp.VersionDisplay == "" {

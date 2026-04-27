@@ -212,6 +212,46 @@ func TestApplyReplyStyleInstruction(t *testing.T) {
 	}
 }
 
+func TestApplyReplyStyleInstructionUsesPerMessageReplyStyleDirective(t *testing.T) {
+	concise := ApplyReplyStyleInstruction("简洁回复：请分析今天的告警", false, "sls")
+	if !strings.Contains(concise, ConciseReplyInstruction) {
+		t.Fatalf("expected concise directive to enable concise reply, got %q", concise)
+	}
+	if strings.Contains(concise, StandardSOPReplyInstruction) {
+		t.Fatalf("expected concise directive not to append full SOP instruction, got %q", concise)
+	}
+
+	full := ApplyReplyStyleInstruction("请详细分析今天的告警", true, "sls")
+	if strings.Contains(full, ConciseReplyInstruction) {
+		t.Fatalf("expected full directive to disable concise reply, got %q", full)
+	}
+	if !strings.Contains(full, StandardSOPReplyInstruction) {
+		t.Fatalf("expected full directive to append SOP instruction, got %q", full)
+	}
+}
+
+func TestApplyReplyStyleInstructionFullDirectiveWinsConflict(t *testing.T) {
+	got := ApplyReplyStyleInstruction("简洁回复，但请完整分析今天的告警", false, "sls")
+	if strings.Contains(got, ConciseReplyInstruction) {
+		t.Fatalf("expected full directive to win over concise directive, got %q", got)
+	}
+	if !strings.Contains(got, StandardSOPReplyInstruction) {
+		t.Fatalf("expected full directive to append SOP instruction, got %q", got)
+	}
+}
+
+func TestApplyReplyStyleInstructionWithSourceIgnoresEnrichedPromptDirectives(t *testing.T) {
+	got := ApplyReplyStyleInstructionWithSource(
+		"请分析今天的告警\n\n本地 SOP 提示：详细分析候选模块。",
+		"请分析今天的告警",
+		true,
+		"sls",
+	)
+	if !strings.Contains(got, ConciseReplyInstruction) {
+		t.Fatalf("expected default concise setting to remain effective, got %q", got)
+	}
+}
+
 func TestApplyReplyStyleInstructionDoesNotForceHighRiskStructureForLowRiskMessage(t *testing.T) {
 	got := ApplyReplyStyleInstruction("帮我润色这段日报", false, "cms")
 	if strings.Contains(got, "结论 / 依据 / 不确定项 / 下一步建议") {
