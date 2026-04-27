@@ -2,9 +2,16 @@ package sopchat
 
 import (
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
 	"github.com/alibabacloud-go/tea/tea"
+)
+
+const (
+	threadAttributeValueMaxBytes = 100
+	truncatedAttributeSuffix     = "..."
 )
 
 // CreateThread 创建会话线程
@@ -16,12 +23,7 @@ func (c *Client) CreateThread(config *ThreadConfig) (*cmsclient.CreateThreadResp
 	}
 
 	if len(config.Attributes) > 0 {
-		attrs := make(map[string]*string, len(config.Attributes))
-		for k, v := range config.Attributes {
-			if strVal, ok := v.(string); ok {
-				attrs[k] = tea.String(strVal)
-			}
-		}
+		attrs := sanitizeThreadAttributes(config.Attributes)
 		if len(attrs) > 0 {
 			request.Attributes = attrs
 		}
@@ -44,6 +46,43 @@ func (c *Client) CreateThread(config *ThreadConfig) (*cmsclient.CreateThreadResp
 	}
 
 	return result, nil
+}
+
+func sanitizeThreadAttributes(attributes map[string]interface{}) map[string]*string {
+	attrs := make(map[string]*string, len(attributes))
+	for k, v := range attributes {
+		strVal, ok := v.(string)
+		if !ok {
+			continue
+		}
+		strVal = strings.TrimSpace(strVal)
+		if strVal == "" {
+			continue
+		}
+		attrs[k] = tea.String(truncateUTF8Bytes(strVal, threadAttributeValueMaxBytes))
+	}
+	return attrs
+}
+
+func truncateUTF8Bytes(value string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+
+	suffix := truncatedAttributeSuffix
+	if len(suffix) >= maxBytes {
+		return suffix[:maxBytes]
+	}
+
+	limit := maxBytes - len(suffix)
+	truncated := value[:limit]
+	for !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return strings.TrimSpace(truncated) + suffix
 }
 
 // ListThreads 列出会话线程
