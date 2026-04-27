@@ -12,7 +12,7 @@ import (
 	"github.com/alibabacloud-go/tea/tea"
 	"github.com/gin-gonic/gin"
 
-	"sop-chat/internal/config"
+	"sop-chat/internal/chatflow"
 	"sop-chat/pkg/sopchat"
 )
 
@@ -91,8 +91,26 @@ func (s *Server) handleChatStream(c *gin.Context) {
 		language = s.globalConfig.GetLanguage()
 	}
 
-	variables := buildEmployeeChatVariables(timeZone, language, runtimeCfg.Context)
-	guardedMessage := config.ApplyReplyStyleInstruction(req.Message, false, runtimeCfg.Context.Product)
+	prepared, prepErr := chatflow.Prepare(s.globalConfig, req.Message, false, timeZone, language, runtimeCfg.Context)
+	if prepErr != nil {
+		log.Printf("workflow planning degraded for chat stream: %v", prepErr)
+	}
+	if prepared == nil {
+		prepared = &chatflow.PreparedRequest{
+			Message:   req.Message,
+			Variables: buildEmployeeChatVariables(timeZone, language, runtimeCfg.Context),
+		}
+	}
+
+	if prepared.Plan != nil {
+		planJSON := map[string]interface{}{
+			"type":    "workflow_plan",
+			"payload": prepared.Plan,
+		}
+		if data, err := json.Marshal(planJSON); err == nil {
+			sendSSEJSON(string(data))
+		}
+	}
 
 	// 创建聊天请求
 	request := &cmsclient.CreateChatRequest{
@@ -105,12 +123,12 @@ func (s *Server) handleChatStream(c *gin.Context) {
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(guardedMessage),
+						Value: tea.String(prepared.Message),
 					},
 				},
 			},
 		},
-		Variables: variables,
+		Variables: prepared.Variables,
 	}
 
 	// 创建 channel 用于接收 SSE 响应

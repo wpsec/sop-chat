@@ -2,8 +2,8 @@ package api
 
 import (
 	"fmt"
-	"time"
 
+	"sop-chat/internal/chatflow"
 	"sop-chat/internal/config"
 )
 
@@ -65,28 +65,5 @@ func (s *Server) resolveEmployeeRuntime(employeeName, explicitCloudAccountID, me
 }
 
 func buildEmployeeChatVariables(timeZone, language string, ctx config.ProductContext) map[string]interface{} {
-	variables := map[string]interface{}{
-		"timeStamp": fmt.Sprintf("%d", time.Now().Unix()),
-		"timeZone":  timeZone,
-		"language":  language,
-	}
-
-	if config.IsSlsProduct(ctx.Product) {
-		variables["skill"] = "sop"
-		if ctx.Project != "" {
-			variables["project"] = ctx.Project
-		}
-		return variables
-	}
-
-	if ctx.Workspace != "" {
-		variables["workspace"] = ctx.Workspace
-	}
-	if ctx.Region != "" {
-		variables["region"] = ctx.Region
-	}
-	now := time.Now()
-	variables["fromTime"] = now.Add(-15 * time.Minute).Unix()
-	variables["toTime"] = now.Unix()
-	return variables
+	return chatflow.BuildVariables(timeZone, language, ctx)
 }

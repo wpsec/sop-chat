@@ -7,6 +7,9 @@ server:
   publicBaseURL: "https://app.example.com"  # 对外访问地址；用于钉钉/分享链接生成
   timeZone: "Asia/Shanghai"
   language: "zh"      # zh | en
+  # 可选：本地 SOP 工作流仓库路径。配置后，sop-chat 会先基于该仓库生成联动分析计划，
+  # 再把计划注入给数字员工，适用于 k8s / backend / postgresql / gateway 等跨模块场景。
+  # sopWorkflowRoot: "/path/to/your/dev-sit-sls_sop"
 
 # ─── 多云账号配置（可选，推荐）───────────────────────────────────────────────
 # 每个账号一套凭据；渠道/定时任务通过 cloudAccountId 绑定。

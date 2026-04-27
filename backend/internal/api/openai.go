@@ -12,6 +12,7 @@ import (
 	"github.com/alibabacloud-go/tea/tea"
 	"github.com/gin-gonic/gin"
 
+	"sop-chat/internal/chatflow"
 	"sop-chat/internal/config"
 	"sop-chat/pkg/sopchat"
 )
@@ -364,7 +365,16 @@ func (s *Server) buildChatRequest(employeeName, threadID, message string, ctx co
 		timeZone = s.globalConfig.GetTimeZone()
 		language = s.globalConfig.GetLanguage()
 	}
-	guardedMessage := config.ApplyReplyStyleInstruction(message, false, ctx.Product)
+	prepared, prepErr := chatflow.Prepare(s.globalConfig, message, false, timeZone, language, ctx)
+	if prepErr != nil {
+		log.Printf("[OpenAI] workflow planning degraded: %v", prepErr)
+	}
+	if prepared == nil {
+		prepared = &chatflow.PreparedRequest{
+			Message:   config.ApplyReplyStyleInstruction(message, false, ctx.Product),
+			Variables: buildEmployeeChatVariables(timeZone, language, ctx),
+		}
+	}
 
 	return &cmsclient.CreateChatRequest{
 		DigitalEmployeeName: tea.String(employeeName),
@@ -376,12 +386,12 @@ func (s *Server) buildChatRequest(employeeName, threadID, message string, ctx co
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(guardedMessage),
+						Value: tea.String(prepared.Message),
 					},
 				},
 			},
 		},
-		Variables: buildEmployeeChatVariables(timeZone, language, ctx),
+		Variables: prepared.Variables,
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
 	"github.com/alibabacloud-go/tea/tea"
 
+	"sop-chat/internal/chatflow"
 	"sop-chat/internal/config"
 	"sop-chat/internal/session"
 	"sop-chat/pkg/sopchat"
@@ -986,30 +987,22 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 	if productType == "" {
 		productType = b.cmsConfig.Product
 	}
-	message = config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType)
-
-	nowTS := time.Now().Unix()
-	variables := map[string]interface{}{
-		"timeStamp": fmt.Sprintf("%d", nowTS),
-		"timeZone":  "Asia/Shanghai",
-		"language":  "zh",
+	prepared, prepErr := chatflow.Prepare(
+		b.GlobalConfig(),
+		message,
+		cfg.ConciseReply,
+		"Asia/Shanghai",
+		"zh",
+		config.NewProductContext(productType, project, workspace, region),
+	)
+	if prepErr != nil {
+		log.Printf("[DingTalk] workflow planning degraded: %v", prepErr)
 	}
-	if config.IsSlsProduct(productType) {
-		variables["skill"] = "sop"
-		if project != "" {
-			variables["project"] = project
+	if prepared == nil {
+		prepared = &chatflow.PreparedRequest{
+			Message:   config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType),
+			Variables: chatflow.BuildVariables("Asia/Shanghai", "zh", config.NewProductContext(productType, project, workspace, region)),
 		}
-	} else {
-		if workspace != "" {
-			variables["workspace"] = workspace
-		}
-		if region != "" {
-			variables["region"] = region
-		}
-		// CMS product: add fromTime/toTime (15-minute window)
-		now := time.Now()
-		variables["fromTime"] = now.Add(-15 * time.Minute).Unix()
-		variables["toTime"] = now.Unix()
 	}
 	request := &cmsclient.CreateChatRequest{
 		DigitalEmployeeName: tea.String(employeeName),
@@ -1021,12 +1014,12 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(message),
+						Value: tea.String(prepared.Message),
 					},
 				},
 			},
 		},
-		Variables: variables,
+		Variables: prepared.Variables,
 	}
 
 	responseChan := make(chan *cmsclient.CreateChatResponse)
@@ -1093,29 +1086,22 @@ func (b *Bot) buildCMSChatRequest(message, threadId string, route resolvedRoute)
 	if productType == "" && b.cmsConfig != nil {
 		productType = b.cmsConfig.Product
 	}
-	message = config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType)
-
-	nowTS := time.Now().Unix()
-	variables := map[string]interface{}{
-		"timeStamp": fmt.Sprintf("%d", nowTS),
-		"timeZone":  "Asia/Shanghai",
-		"language":  "zh",
+	prepared, prepErr := chatflow.Prepare(
+		b.GlobalConfig(),
+		message,
+		cfg.ConciseReply,
+		"Asia/Shanghai",
+		"zh",
+		config.NewProductContext(productType, route.project, route.workspace, route.region),
+	)
+	if prepErr != nil {
+		log.Printf("[DingTalk] workflow planning degraded: %v", prepErr)
 	}
-	if config.IsSlsProduct(productType) {
-		variables["skill"] = "sop"
-		if route.project != "" {
-			variables["project"] = route.project
+	if prepared == nil {
+		prepared = &chatflow.PreparedRequest{
+			Message:   config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType),
+			Variables: chatflow.BuildVariables("Asia/Shanghai", "zh", config.NewProductContext(productType, route.project, route.workspace, route.region)),
 		}
-	} else {
-		if route.workspace != "" {
-			variables["workspace"] = route.workspace
-		}
-		if route.region != "" {
-			variables["region"] = route.region
-		}
-		now := time.Now()
-		variables["fromTime"] = now.Add(-15 * time.Minute).Unix()
-		variables["toTime"] = now.Unix()
 	}
 
 	return &cmsclient.CreateChatRequest{
@@ -1128,12 +1114,12 @@ func (b *Bot) buildCMSChatRequest(message, threadId string, route resolvedRoute)
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(message),
+						Value: tea.String(prepared.Message),
 					},
 				},
 			},
 		},
-		Variables: variables,
+		Variables: prepared.Variables,
 	}
 }
 

@@ -925,6 +925,96 @@ body {
   word-wrap: break-word;
 }
 
+.workflow-plan-card {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 247, 237, 0.96) 0%, rgba(255, 251, 235, 0.96) 100%);
+  border: 1px solid rgba(234, 88, 12, 0.14);
+  border-left: 3px solid #ea580c;
+  box-shadow: 0 2px 4px rgba(234, 88, 12, 0.08);
+  animation: slideIn 0.3s ease;
+}
+
+.workflow-plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.workflow-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(234, 88, 12, 0.12);
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-plan-window {
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workflow-plan-summary {
+  color: #7c2d12;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+
+.workflow-plan-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-plan-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.workflow-plan-label {
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-plan-value {
+  color: #7c2d12;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.workflow-plan-evidence {
+  margin-top: 12px;
+}
+
+.workflow-plan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.workflow-plan-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(234, 88, 12, 0.12);
+  color: #7c2d12;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* Individual Tool Call Item - Independent card */
 .inline-tool-item {
   background: linear-gradient(135deg, #f0f7ff 0%, #e6f4ff 100%);

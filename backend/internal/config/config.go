@@ -46,6 +46,7 @@ type ServerConfig struct {
 	PublicBaseURL       string `yaml:"publicBaseURL,omitempty"`       // 对外访问地址，用于生成分享链接
 	TimeZone            string `yaml:"timeZone,omitempty"`            // 时区设置
 	Language            string `yaml:"language,omitempty"`            // 语言设置
+	SOPWorkflowRoot     string `yaml:"sopWorkflowRoot,omitempty"`     // 本地 SOP 工作流仓库路径
 	BindThreadToProcess *bool  `yaml:"bindThreadToProcess,omitempty"` // 是否将 thread 绑定到进程生命周期
 }
 
@@ -1481,4 +1482,12 @@ func (c *Config) GetLanguage() string {
 		return c.Global.Language
 	}
 	return "zh"
+}
+
+// GetSOPWorkflowRoot 返回本地 SOP 工作流目录；为空表示不启用本地联动规划。
+func (c *Config) GetSOPWorkflowRoot() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Server.SOPWorkflowRoot)
 }

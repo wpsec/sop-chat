@@ -115,6 +115,119 @@ const extractToolResultText = (result) => {
   return stringifyStructuredValue(result).trim();
 };
 
+const formatWorkflowPlanMarkdown = (plan = {}) => {
+  if (!plan || typeof plan !== 'object') {
+    return '';
+  }
+
+  const lines = ['## 联动分析计划', ''];
+
+  if (plan.summary) {
+    lines.push(`- 概要：${plan.summary}`);
+  }
+  if (plan.workflow?.name) {
+    const workflowLine = plan.workflow.timeWindow
+      ? `${plan.workflow.name}（建议时间窗：${plan.workflow.timeWindow}）`
+      : plan.workflow.name;
+    lines.push(`- 主工作流：${workflowLine}`);
+  }
+  if (plan.entryModule?.name) {
+    lines.push(`- 入口模块：${plan.entryModule.name}`);
+  }
+  if (Array.isArray(plan.handoffModules) && plan.handoffModules.length > 0) {
+    lines.push(`- 候选联动模块：${plan.handoffModules.map((item) => item.name).filter(Boolean).join('、')}`);
+  }
+  if (plan.timeWindow) {
+    lines.push(`- 建议时间窗口：${plan.timeWindow}`);
+  }
+  if (Array.isArray(plan.correlationKeys) && plan.correlationKeys.length > 0) {
+    lines.push(`- 关联键：${plan.correlationKeys.map((item) => item.name).filter(Boolean).join('、')}`);
+  }
+  if (Array.isArray(plan.candidateDataSources) && plan.candidateDataSources.length > 0) {
+    lines.push(`- 数据源：${plan.candidateDataSources.map((item) => item.name).filter(Boolean).join('、')}`);
+  }
+  if (Array.isArray(plan.evidenceChecklist) && plan.evidenceChecklist.length > 0) {
+    lines.push('- 证据检查：');
+    plan.evidenceChecklist.forEach((item) => {
+      lines.push(`  - ${item}`);
+    });
+  }
+  lines.push('');
+
+  return lines.join('\n');
+};
+
+const renderWorkflowPlanCard = (plan = {}) => {
+  const handoffNames = Array.isArray(plan.handoffModules)
+    ? plan.handoffModules.map((item) => item?.name).filter(Boolean)
+    : [];
+  const keyNames = Array.isArray(plan.correlationKeys)
+    ? plan.correlationKeys.map((item) => item?.name).filter(Boolean)
+    : [];
+  const sourceNames = Array.isArray(plan.candidateDataSources)
+    ? plan.candidateDataSources.map((item) => item?.name).filter(Boolean)
+    : [];
+  const evidenceItems = Array.isArray(plan.evidenceChecklist)
+    ? plan.evidenceChecklist.filter(Boolean)
+    : [];
+
+  return (
+    <div className="workflow-plan-card">
+      <div className="workflow-plan-header">
+        <span className="workflow-plan-badge">联动规划</span>
+        {plan.timeWindow && (
+          <span className="workflow-plan-window">{plan.timeWindow}</span>
+        )}
+      </div>
+      {plan.summary && (
+        <div className="workflow-plan-summary">{plan.summary}</div>
+      )}
+      <div className="workflow-plan-grid">
+        {plan.workflow?.name && (
+          <div className="workflow-plan-row">
+            <span className="workflow-plan-label">主工作流</span>
+            <span className="workflow-plan-value">{plan.workflow.name}</span>
+          </div>
+        )}
+        {plan.entryModule?.name && (
+          <div className="workflow-plan-row">
+            <span className="workflow-plan-label">入口模块</span>
+            <span className="workflow-plan-value">{plan.entryModule.name}</span>
+          </div>
+        )}
+        {handoffNames.length > 0 && (
+          <div className="workflow-plan-row">
+            <span className="workflow-plan-label">候选联动</span>
+            <span className="workflow-plan-value">{handoffNames.join('、')}</span>
+          </div>
+        )}
+        {keyNames.length > 0 && (
+          <div className="workflow-plan-row">
+            <span className="workflow-plan-label">关联键</span>
+            <span className="workflow-plan-value">{keyNames.join('、')}</span>
+          </div>
+        )}
+        {sourceNames.length > 0 && (
+          <div className="workflow-plan-row">
+            <span className="workflow-plan-label">数据源</span>
+            <span className="workflow-plan-value">{sourceNames.join('、')}</span>
+          </div>
+        )}
+      </div>
+      {evidenceItems.length > 0 && (
+        <div className="workflow-plan-evidence">
+          <div className="workflow-plan-label">证据检查</div>
+          <div className="workflow-plan-tags">
+            {evidenceItems.map((item) => (
+              <span key={item} className="workflow-plan-tag">{item}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const buildDownloadMarkdown = ({
   content,
   processedEvents = [],
@@ -142,6 +255,16 @@ const buildDownloadMarkdown = ({
       hasBodyContent = true;
       lines.push('## 回答', '', fallbackAnswer, '');
     }
+  }
+
+  const workflowSections = processedEvents
+    .filter((event) => event.type === 'workflow_plan')
+    .map((event) => formatWorkflowPlanMarkdown(event.data))
+    .filter(Boolean);
+
+  if (workflowSections.length > 0) {
+    hasBodyContent = true;
+    lines.push(...workflowSections);
   }
 
   const toolSections = processedEvents
@@ -590,6 +713,20 @@ const Message = ({
           data: eventData,
           id: `tool-${processed.length}`
         });
+      } else if (event.type === 'workflow_plan') {
+        if (contentBuffer.length > 0) {
+          processed.push({
+            type: 'content',
+            data: contentBuffer.join(''),
+            id: `content-${processed.length}`
+          });
+          contentBuffer = [];
+        }
+        processed.push({
+          type: 'workflow_plan',
+          data: event.data,
+          id: `workflow-plan-${processed.length}`
+        });
       } else if (event.type === 'error') {
         // Before adding error, flush content buffer
         if (contentBuffer.length > 0) {
@@ -854,7 +991,13 @@ const Message = ({
           
           {/* Render events in true chronological order */}
           {processedEvents.map((event) => {
-            if (event.type === 'error') {
+            if (event.type === 'workflow_plan') {
+              return (
+                <div key={event.id}>
+                  {renderWorkflowPlanCard(event.data)}
+                </div>
+              );
+            } else if (event.type === 'error') {
               // Render error event
               const errorData = event.data;
               return (

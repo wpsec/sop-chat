@@ -20,6 +20,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 
+	"sop-chat/internal/chatflow"
 	"sop-chat/internal/config"
 	"sop-chat/internal/session"
 	"sop-chat/pkg/sopchat"
@@ -614,30 +615,22 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId string, targe
 	if productType == "" && b.cmsConfig != nil {
 		productType = b.cmsConfig.Product
 	}
-	message = config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType)
-
-	nowTS := time.Now().Unix()
-	variables := map[string]interface{}{
-		"timeStamp": fmt.Sprintf("%d", nowTS),
-		"timeZone":  "Asia/Shanghai",
-		"language":  "zh",
+	prepared, prepErr := chatflow.Prepare(
+		b.GlobalConfig(),
+		message,
+		cfg.ConciseReply,
+		"Asia/Shanghai",
+		"zh",
+		config.NewProductContext(productType, project, workspace, region),
+	)
+	if prepErr != nil {
+		log.Printf("[Feishu] workflow planning degraded: %v", prepErr)
 	}
-	if config.IsSlsProduct(productType) {
-		variables["skill"] = "sop"
-		if project != "" {
-			variables["project"] = project
+	if prepared == nil {
+		prepared = &chatflow.PreparedRequest{
+			Message:   config.ApplyReplyStyleInstruction(message, cfg.ConciseReply, productType),
+			Variables: chatflow.BuildVariables("Asia/Shanghai", "zh", config.NewProductContext(productType, project, workspace, region)),
 		}
-	} else {
-		if workspace != "" {
-			variables["workspace"] = workspace
-		}
-		if region != "" {
-			variables["region"] = region
-		}
-		// CMS product: add fromTime/toTime (15-minute window)
-		now := time.Now()
-		variables["fromTime"] = now.Add(-15 * time.Minute).Unix()
-		variables["toTime"] = now.Unix()
 	}
 	request := &cmsclient.CreateChatRequest{
 		DigitalEmployeeName: tea.String(target.employeeName),
@@ -649,12 +642,12 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId string, targe
 				Contents: []*cmsclient.CreateChatRequestMessagesContents{
 					{
 						Type:  tea.String("text"),
-						Value: tea.String(message),
+						Value: tea.String(prepared.Message),
 					},
 				},
 			},
 		},
-		Variables: variables,
+		Variables: prepared.Variables,
 	}
 
 	responseChan := make(chan *cmsclient.CreateChatResponse)

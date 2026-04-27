@@ -329,6 +329,15 @@ const ChatWindow = () => {
           setThreadId(receivedThreadId);
         }
       },
+      // onWorkflowPlan: show local workflow planning result before tool calls/content
+      (plan) => {
+        streamingMessageRef.current.events.push({
+          type: 'workflow_plan',
+          data: plan,
+          timestamp: Date.now()
+        });
+        setStreamingMessage({ ...streamingMessageRef.current });
+      },
       // onChunk: handle incoming content chunks
       // 注意：新的 API 格式每次发送的是累积的完整内容，所以应该更新最后一个 content 事件
       (chunk) => {

@@ -359,6 +359,7 @@ export const createShareLink = async (employeeName, threadId, cloudAccountId = '
  * @param {string} threadId - Thread ID (optional for new threads)
  * @param {string} message - User's message
  * @param {Function} onMeta - Callback for meta info
+ * @param {Function} onWorkflowPlan - Callback for workflow planning result
  * @param {Function} onChunk - Callback for each content chunk
  * @param {Function} onToolCall - Callback when a tool is called
  * @param {Function} onToolResult - Callback when a tool returns result
@@ -373,6 +374,7 @@ export const sendChatMessageStream = async (
   message,
   cloudAccountId,
   onMeta,
+  onWorkflowPlan,
   onChunk,
   onToolCall,
   onToolResult,
@@ -471,6 +473,13 @@ export const sendChatMessageStream = async (
                 onMeta && onMeta(msg.threadId);
               }
               onComplete && onComplete();
+              continue;
+            }
+
+            if (msg.type === 'workflow_plan') {
+              if (msg.payload) {
+                onWorkflowPlan && onWorkflowPlan(msg.payload);
+              }
               continue;
             }
 
