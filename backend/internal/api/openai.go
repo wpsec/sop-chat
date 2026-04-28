@@ -473,27 +473,19 @@ func (s *Server) handleOpenAIStreamResponse(c *gin.Context, employeeName, thread
 			if response.Body == nil {
 				continue
 			}
-			// 检测 done 消息
+			for _, msg := range response.Body.Messages {
+				if msg == nil || sopchat.IsDoneChatMessage(msg) {
+					continue
+				}
+				for _, s := range sopchat.TextContentValues(msg) {
+					if s != "" {
+						sendChunk(s, nil, "")
+					}
+				}
+			}
 			if sopchat.IsDoneMessage(response.Body) {
 				done = true
 				break
-			}
-			for _, msg := range response.Body.Messages {
-				if msg == nil {
-					continue
-				}
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok && s != "" {
-								sendChunk(s, nil, "")
-							}
-						}
-					}
-				}
 			}
 
 		case err, ok := <-errorChan:
@@ -558,27 +550,19 @@ func (s *Server) handleOpenAINonStreamResponse(c *gin.Context, employeeName, thr
 			if response.Body == nil {
 				continue
 			}
-			// 检测 done 消息
+			for _, msg := range response.Body.Messages {
+				if msg == nil || sopchat.IsDoneChatMessage(msg) {
+					continue
+				}
+				for _, s := range sopchat.TextContentValues(msg) {
+					if s != "" {
+						textParts = append(textParts, s)
+					}
+				}
+			}
 			if sopchat.IsDoneMessage(response.Body) {
 				done = true
 				break
-			}
-			for _, msg := range response.Body.Messages {
-				if msg == nil {
-					continue
-				}
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok && s != "" {
-								textParts = append(textParts, s)
-							}
-						}
-					}
-				}
 			}
 
 		case err, ok := <-errorChan:

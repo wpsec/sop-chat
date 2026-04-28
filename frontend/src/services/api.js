@@ -466,17 +466,9 @@ export const sendChatMessageStream = async (
           try {
             const jsonStr = line.slice(6);
             const msg = JSON.parse(jsonStr);
+            const isDoneMessage = msg.type === 'done';
 
-            // 处理完成消息
-            if (msg.type === 'done') {
-              if (msg.threadId) {
-                onMeta && onMeta(msg.threadId);
-              }
-              onComplete && onComplete();
-              continue;
-            }
-
-            if (msg.type === 'workflow_plan') {
+            if (!isDoneMessage && msg.type === 'workflow_plan') {
               if (msg.payload) {
                 onWorkflowPlan && onWorkflowPlan(msg.payload);
               }
@@ -484,7 +476,7 @@ export const sendChatMessageStream = async (
             }
 
             // 处理错误消息
-            if (msg.type === 'error') {
+            if (!isDoneMessage && msg.type === 'error') {
               let errorMessage = '发生错误';
               if (typeof msg.error === 'string') {
                 errorMessage = msg.error;
@@ -593,6 +585,15 @@ export const sendChatMessageStream = async (
                   // 可以在这里处理，但目前不需要特殊操作
                 }
               }
+            }
+
+            // 处理完成消息。必须放在内容解析之后，兼容正文和 done 同包返回。
+            if (isDoneMessage) {
+              if (msg.threadId) {
+                onMeta && onMeta(msg.threadId);
+              }
+              onComplete && onComplete();
+              continue;
             }
 
           } catch (e) {

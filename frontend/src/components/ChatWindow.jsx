@@ -532,13 +532,16 @@ const ChatWindow = () => {
       },
       // onComplete: finalize the message
       () => {
-        // Save the complete message with events array
-        const finalMessage = {
-          role: 'assistant',
-          events: streamingMessageRef.current.events  // Save all events in chronological order
-        };
+        const events = streamingMessageRef.current?.events || [];
 
-        setMessages((prev) => [...prev, finalMessage]);
+        if (events.length > 0) {
+          const finalMessage = {
+            role: 'assistant',
+            events
+          };
+
+          setMessages((prev) => [...prev, finalMessage]);
+        }
 
         // Refresh thread list after chat completion
         refreshThreadList();

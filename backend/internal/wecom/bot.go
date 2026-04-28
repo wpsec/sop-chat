@@ -486,26 +486,16 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId string, targe
 			if response.Body == nil {
 				continue
 			}
-			// 检测 done 消息
-			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
-			}
 			for _, msg := range response.Body.Messages {
 				if msg == nil {
 					continue
 				}
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok {
-								textParts = append(textParts, s)
-							}
-						}
-					}
+				for _, s := range sopchat.TextContentValues(msg) {
+					textParts = append(textParts, s)
 				}
+			}
+			if sopchat.IsDoneMessage(response.Body) {
+				return strings.Join(textParts, ""), returnedThreadId, nil
 			}
 
 		case err, ok := <-errorChan:

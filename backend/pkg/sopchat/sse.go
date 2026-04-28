@@ -5,17 +5,46 @@ import (
 	"github.com/alibabacloud-go/tea/dara"
 )
 
+// IsDoneChatMessage 检查单条 SSE 消息是否为 done 结束信号。
+func IsDoneChatMessage(msg *cmsclient.CreateChatResponseBodyMessages) bool {
+	return msg != nil && msg.Type != nil && *msg.Type == "done"
+}
+
 // IsDoneMessage 检查 SSE 响应是否包含 done 类型的消息，表示对话已完成
 func IsDoneMessage(body *cmsclient.CreateChatResponseBody) bool {
 	if body == nil {
 		return false
 	}
 	for _, msg := range body.Messages {
-		if msg != nil && msg.Type != nil && *msg.Type == "done" {
+		if IsDoneChatMessage(msg) {
 			return true
 		}
 	}
 	return false
+}
+
+// TextContentValues 提取消息中的 text 内容片段。
+func TextContentValues(msg *cmsclient.CreateChatResponseBodyMessages) []string {
+	if msg == nil {
+		return nil
+	}
+
+	values := make([]string, 0, len(msg.Contents))
+	for _, content := range msg.Contents {
+		if content == nil {
+			continue
+		}
+		contentType, ok := content["type"].(string)
+		if !ok || contentType != "text" {
+			continue
+		}
+		value, ok := content["value"].(string)
+		if !ok {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
 }
 
 // SSE 读超时（毫秒）：须 ≥ scheduler/queryEmployee 的 30m context，否则长对话会在约 5 分钟时出现

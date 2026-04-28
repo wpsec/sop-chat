@@ -1043,27 +1043,18 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 			if response.Body == nil {
 				continue
 			}
-			// 检测 done 消息
-			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
-			}
 			for _, msg := range response.Body.Messages {
 				if msg == nil {
 					continue
 				}
 				// 从 Contents 中提取 text 类型的内容
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok {
-								textParts = append(textParts, s)
-							}
-						}
-					}
+				for _, s := range sopchat.TextContentValues(msg) {
+					textParts = append(textParts, s)
 				}
+			}
+			// 同一个 SSE body 可能同时包含最终文本和 done，需要先消费文本再结束。
+			if sopchat.IsDoneMessage(response.Body) {
+				return strings.Join(textParts, ""), returnedThreadId, nil
 			}
 
 		case err, ok := <-errorChan:
@@ -1172,10 +1163,6 @@ func (b *Bot) streamEmployeeWithRoute(
 			if response.Body == nil {
 				continue
 			}
-			// 检测 done 消息
-			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
-			}
 			for _, msg := range response.Body.Messages {
 				if msg == nil {
 					continue
@@ -1189,28 +1176,23 @@ func (b *Bot) streamEmployeeWithRoute(
 					}
 				}
 				// 从 Contents 中提取 text 类型的内容
-				for _, content := range msg.Contents {
-					if content == nil {
+				for _, s := range sopchat.TextContentValues(msg) {
+					textParts = append(textParts, s)
+					accumulated := strings.Join(textParts, "")
+					if !answeringStarted {
+						answeringStarted = true
+						emitUpdate(chatProgressUpdate{
+							Stage:       "已获取分析结果，正在整理回答",
+							Accumulated: accumulated,
+						})
 						continue
 					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok {
-								textParts = append(textParts, s)
-								accumulated := strings.Join(textParts, "")
-								if !answeringStarted {
-									answeringStarted = true
-									emitUpdate(chatProgressUpdate{
-										Stage:       "已获取分析结果，正在整理回答",
-										Accumulated: accumulated,
-									})
-									continue
-								}
-								emitUpdate(chatProgressUpdate{Accumulated: accumulated})
-							}
-						}
-					}
+					emitUpdate(chatProgressUpdate{Accumulated: accumulated})
 				}
+			}
+			// 同一个 SSE body 可能同时包含最终文本和 done，需要先消费文本再结束。
+			if sopchat.IsDoneMessage(response.Body) {
+				return strings.Join(textParts, ""), returnedThreadId, nil
 			}
 
 		case err, ok := <-errorChan:

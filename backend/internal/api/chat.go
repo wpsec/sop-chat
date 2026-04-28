@@ -191,12 +191,6 @@ func (s *Server) handleChatStream(c *gin.Context) {
 				}
 				// ThreadId 不在 Body 中，使用请求中的 threadId
 
-				// 检测 done 消息，提前结束 SSE 循环
-				if sopchat.IsDoneMessage(response.Body) {
-					done = true
-					break
-				}
-
 				// 处理消息：直接将消息序列化为 JSON 并转发
 				if response.Body.Messages != nil {
 					for _, msg := range response.Body.Messages {
@@ -210,6 +204,15 @@ func (s *Server) handleChatStream(c *gin.Context) {
 
 						if msg == nil {
 							continue
+						}
+						if sopchat.IsDoneChatMessage(msg) {
+							done = true
+							if len(msg.Contents) == 0 && len(msg.Tools) == 0 && len(msg.Events) == 0 {
+								continue
+							}
+							msgCopy := *msg
+							msgCopy.Type = nil
+							msg = &msgCopy
 						}
 
 						// 将消息对象序列化为 JSON

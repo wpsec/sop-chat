@@ -339,31 +339,20 @@ func queryEmployee(clientCfg *config.ClientConfig, taskName, employeeName, messa
 				continue
 			}
 
-			// 检测 done 消息
-			if sopchat.IsDoneMessage(response.Body) {
-				result := strings.Join(textParts, "")
-				log.Printf("[Scheduler] queryEmployee 完成: employee=%q threadId=%s product=%q 问题=%s 耗时 %s 共 %d 帧 文本 %d 字",
-					employeeName, threadId, product, msgShort, time.Since(startSSE).Round(time.Millisecond), responseCount, len([]rune(result)))
-				return result, nil
-			}
-
 			for _, msg := range response.Body.Messages {
 				if msg == nil {
 					continue
 				}
 				msgCount++
-				for _, content := range msg.Contents {
-					if content == nil {
-						continue
-					}
-					if t, ok := content["type"]; ok && t == "text" {
-						if v, ok := content["value"]; ok {
-							if s, ok := v.(string); ok {
-								textParts = append(textParts, s)
-							}
-						}
-					}
+				for _, s := range sopchat.TextContentValues(msg) {
+					textParts = append(textParts, s)
 				}
+			}
+			if sopchat.IsDoneMessage(response.Body) {
+				result := strings.Join(textParts, "")
+				log.Printf("[Scheduler] queryEmployee 完成: employee=%q threadId=%s product=%q 问题=%s 耗时 %s 共 %d 帧 文本 %d 字",
+					employeeName, threadId, product, msgShort, time.Since(startSSE).Round(time.Millisecond), responseCount, len([]rune(result)))
+				return result, nil
 			}
 
 		case err, ok := <-errorChan:
