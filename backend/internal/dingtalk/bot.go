@@ -38,9 +38,21 @@ const (
 	noRunningAnalysisReplyText = "当前没有正在进行的分析任务。"
 )
 
+var errEmptyEmployeeReply = errors.New("数字员工未返回可展示内容，请稍后重试")
+
 type chatProgressUpdate struct {
 	Stage       string
 	Accumulated string
+}
+
+type chatStreamDiagnostics struct {
+	requestID     string
+	traceID       string
+	lastType      string
+	lastDetailLen int
+	responseCount int
+	messageCount  int
+	done          bool
 }
 
 type runningTask struct {
@@ -316,11 +328,125 @@ func stringifyAny(value interface{}) string {
 	switch v := value.(type) {
 	case string:
 		return strings.TrimSpace(v)
+	case nil:
+		return ""
 	case fmt.Stringer:
 		return strings.TrimSpace(v.String())
 	default:
 		return strings.TrimSpace(fmt.Sprint(value))
 	}
+}
+
+func (d *chatStreamDiagnostics) observe(response *cmsclient.CreateChatResponse) {
+	if d == nil || response == nil {
+		return
+	}
+	d.responseCount++
+	if response.Body == nil {
+		return
+	}
+	if d.requestID == "" {
+		d.requestID = strings.TrimSpace(tea.StringValue(response.Body.RequestId))
+	}
+	if d.traceID == "" {
+		d.traceID = strings.TrimSpace(tea.StringValue(response.Body.TraceId))
+	}
+	for _, msg := range response.Body.Messages {
+		if msg == nil {
+			continue
+		}
+		d.messageCount++
+		if msgType := strings.TrimSpace(tea.StringValue(msg.Type)); msgType != "" {
+			d.lastType = msgType
+		}
+		if detail := strings.TrimSpace(tea.StringValue(msg.Detail)); detail != "" {
+			d.lastDetailLen = len([]rune(detail))
+		}
+		if sopchat.IsDoneChatMessage(msg) {
+			d.done = true
+		}
+	}
+}
+
+func firstChatMessageDetail(messages []*cmsclient.CreateChatResponseBodyMessages) string {
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		if detail := strings.TrimSpace(tea.StringValue(msg.Detail)); detail != "" {
+			return detail
+		}
+	}
+	return ""
+}
+
+func chatMessageError(msg *cmsclient.CreateChatResponseBodyMessages) string {
+	if msg == nil {
+		return ""
+	}
+	msgType := strings.ToLower(strings.TrimSpace(tea.StringValue(msg.Type)))
+	detail := strings.TrimSpace(tea.StringValue(msg.Detail))
+	if msgType == "error" || msgType == "failed" {
+		if detail != "" {
+			return detail
+		}
+		return "数字员工返回失败消息"
+	}
+	for _, content := range msg.Contents {
+		contentType := strings.ToLower(stringifyAny(content["type"]))
+		if contentType != "error" && contentType != "failed" {
+			continue
+		}
+		if value := stringifyAny(content["value"]); value != "" {
+			return value
+		}
+		return "数字员工返回错误内容"
+	}
+	return ""
+}
+
+func chatResponseError(response *cmsclient.CreateChatResponse) error {
+	if response == nil {
+		return nil
+	}
+	if response.StatusCode != nil && *response.StatusCode != 200 {
+		statusCode := *response.StatusCode
+		detail := ""
+		if response.Body != nil {
+			detail = firstChatMessageDetail(response.Body.Messages)
+		}
+		if detail != "" {
+			return fmt.Errorf("数字员工接口返回状态码 %d: %s", statusCode, detail)
+		}
+		return fmt.Errorf("数字员工接口返回状态码 %d", statusCode)
+	}
+	if response.Body == nil {
+		return nil
+	}
+	for _, msg := range response.Body.Messages {
+		if errText := chatMessageError(msg); errText != "" {
+			return errors.New(errText)
+		}
+	}
+	return nil
+}
+
+func finishEmployeeStream(textParts []string, returnedThreadID string, diagnostics chatStreamDiagnostics) (string, string, error) {
+	replyText := strings.Join(textParts, "")
+	if strings.TrimSpace(replyText) != "" {
+		return replyText, returnedThreadID, nil
+	}
+	log.Printf("[DingTalk] 数字员工返回空内容: threadId=%s requestId=%s traceId=%s responses=%d messages=%d done=%v lastType=%s lastDetailLen=%d",
+		returnedThreadID,
+		diagnostics.requestID,
+		diagnostics.traceID,
+		diagnostics.responseCount,
+		diagnostics.messageCount,
+		diagnostics.done,
+		diagnostics.lastType,
+		diagnostics.lastDetailLen,
+	)
+	return "", returnedThreadID, errEmptyEmployeeReply
 }
 
 func toolPurposeDescription(name string) string {
@@ -1030,6 +1156,7 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 
 	var textParts []string
 	returnedThreadId := threadId
+	diagnostics := chatStreamDiagnostics{}
 
 	for {
 		select {
@@ -1038,7 +1165,11 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 
 		case response, ok := <-responseChan:
 			if !ok {
-				return strings.Join(textParts, ""), returnedThreadId, nil
+				return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
+			}
+			diagnostics.observe(response)
+			if err := chatResponseError(response); err != nil {
+				return strings.Join(textParts, ""), returnedThreadId, err
 			}
 			if response.Body == nil {
 				continue
@@ -1054,14 +1185,14 @@ func (b *Bot) queryEmployee(ctx context.Context, message, threadId, employeeName
 			}
 			// 同一个 SSE body 可能同时包含最终文本和 done，需要先消费文本再结束。
 			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
+				return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
 			}
 
 		case err, ok := <-errorChan:
 			if ok && err != nil {
 				return strings.Join(textParts, ""), returnedThreadId, err
 			}
-			return strings.Join(textParts, ""), returnedThreadId, nil
+			return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
 		}
 	}
 }
@@ -1138,6 +1269,7 @@ func (b *Bot) streamEmployeeWithRoute(
 	var textParts []string
 	returnedThreadId := threadId
 	answeringStarted := false
+	diagnostics := chatStreamDiagnostics{}
 
 	emitUpdate := func(update chatProgressUpdate) {
 		if onUpdate == nil {
@@ -1158,7 +1290,11 @@ func (b *Bot) streamEmployeeWithRoute(
 
 		case response, ok := <-responseChan:
 			if !ok {
-				return strings.Join(textParts, ""), returnedThreadId, nil
+				return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
+			}
+			diagnostics.observe(response)
+			if err := chatResponseError(response); err != nil {
+				return strings.Join(textParts, ""), returnedThreadId, err
 			}
 			if response.Body == nil {
 				continue
@@ -1192,14 +1328,14 @@ func (b *Bot) streamEmployeeWithRoute(
 			}
 			// 同一个 SSE body 可能同时包含最终文本和 done，需要先消费文本再结束。
 			if sopchat.IsDoneMessage(response.Body) {
-				return strings.Join(textParts, ""), returnedThreadId, nil
+				return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
 			}
 
 		case err, ok := <-errorChan:
 			if ok && err != nil {
 				return strings.Join(textParts, ""), returnedThreadId, err
 			}
-			return strings.Join(textParts, ""), returnedThreadId, nil
+			return finishEmployeeStream(textParts, returnedThreadId, diagnostics)
 		}
 	}
 }

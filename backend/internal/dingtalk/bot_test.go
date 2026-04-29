@@ -2,8 +2,13 @@ package dingtalk
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
+	"github.com/alibabacloud-go/tea/tea"
 )
 
 func TestIsCancelCommand(t *testing.T) {
@@ -58,5 +63,74 @@ func TestCancelRunningTask(t *testing.T) {
 	bot.unregisterRunningTask("task-key", task)
 	if bot.cancelRunningTask("task-key") {
 		t.Fatalf("expected missing task to return false")
+	}
+}
+
+func TestFinishEmployeeStreamRejectsEmptyText(t *testing.T) {
+	replyText, threadID, err := finishEmployeeStream(nil, "thread-1", chatStreamDiagnostics{
+		requestID:     "req-1",
+		responseCount: 1,
+		messageCount:  1,
+		done:          true,
+	})
+	if !errors.Is(err, errEmptyEmployeeReply) {
+		t.Fatalf("expected empty reply error, got %v", err)
+	}
+	if replyText != "" {
+		t.Fatalf("expected empty reply text, got %q", replyText)
+	}
+	if threadID != "thread-1" {
+		t.Fatalf("expected thread id to be preserved, got %q", threadID)
+	}
+}
+
+func TestFinishEmployeeStreamKeepsText(t *testing.T) {
+	replyText, threadID, err := finishEmployeeStream([]string{"结论", "正常"}, "thread-1", chatStreamDiagnostics{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if replyText != "结论正常" {
+		t.Fatalf("unexpected reply text %q", replyText)
+	}
+	if threadID != "thread-1" {
+		t.Fatalf("expected thread id to be preserved, got %q", threadID)
+	}
+}
+
+func TestChatResponseErrorFromStatusDetail(t *testing.T) {
+	response := &cmsclient.CreateChatResponse{
+		StatusCode: tea.Int32(500),
+		Body: &cmsclient.CreateChatResponseBody{
+			Messages: []*cmsclient.CreateChatResponseBodyMessages{
+				{Detail: tea.String("backend failed")},
+			},
+		},
+	}
+
+	err := chatResponseError(response)
+	if err == nil {
+		t.Fatal("expected response error")
+	}
+	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "backend failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestChatResponseErrorFromMessageType(t *testing.T) {
+	response := &cmsclient.CreateChatResponse{
+		StatusCode: tea.Int32(200),
+		Body: &cmsclient.CreateChatResponseBody{
+			Messages: []*cmsclient.CreateChatResponseBodyMessages{
+				{Type: tea.String("failed"), Detail: tea.String("tool failed")},
+			},
+		},
+	}
+
+	err := chatResponseError(response)
+	if err == nil {
+		t.Fatal("expected message error")
+	}
+	if err.Error() != "tool failed" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
