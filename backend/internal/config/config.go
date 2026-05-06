@@ -447,6 +447,8 @@ const (
 	ConciseReplyInstruction = "\n\n（请用简洁的纯文本回答，避免复杂排版，适合在 IM 中直接阅读，控制在几句话以内。尽量拟人的语气，少用 markdown。）"
 	// StandardSOPReplyInstruction 在关闭简洁模式且对接 SLS/SOP 员工时，提示模型按完整 SOP 规范作答。
 	StandardSOPReplyInstruction = "\n\n（请严格按照 SOP 文档和标准流程完整回答，不要为了适应 IM 而省略关键判断、排查步骤、影响面、结论和建议；如果有既定模板或报告格式，请尽量按模板完整输出。）"
+	// ConciseSOPReplyInstruction 在 SLS/SOP 简洁模式下约束“完整执行、压缩输出”。
+	ConciseSOPReplyInstruction = "\n\n（SLS/SOP 简洁回复约束：简洁只影响最终表达，不允许减少 SOP 查询步骤、必查字段或证据校验。必须先按 SOP 完成关键数据源和必查字段检查，再把最终输出压缩为“结论 / 分析链 / 关键证据 / 风险等级或证据状态 / 下一步”五项；对未实际查询的字段只能写“未查询 / 查询失败”，不能写成“未发现”。WAF/安全类问题尤其不能省略 action、rule_id/attack_type、白名单、bypass_matched_ids、敏感路径和是否到达后端等定性字段。）"
 	// AntiHallucinationBaselineInstruction 为所有入口附加的基础防幻觉约束。
 	AntiHallucinationBaselineInstruction = "\n\n（回答约束：只基于当前问题、上下文、已授权数据源返回、SOP 文档和工具结果作答；不要编造用户、角色、权限、资源名称、时间、错误码、配置字段、接口返回或执行结果；如果无法确认，请明确写“当前没有足够依据确认”或“需要补充信息”；不要把推测当成事实。）"
 	// HighRiskStructuredReplyInstruction 要求高风险问题使用更保守、更易审阅的结构回答。
@@ -526,6 +528,9 @@ func ApplyReplyStyleInstructionWithSource(message, originalMessage string, conci
 		}
 	}
 	if effectiveConciseReply {
+		if IsSlsProduct(product) {
+			return message + ConciseSOPReplyInstruction + ConciseReplyInstruction
+		}
 		return message + ConciseReplyInstruction
 	}
 	if IsSlsProduct(product) {

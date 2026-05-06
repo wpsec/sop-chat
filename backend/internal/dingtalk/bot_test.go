@@ -134,3 +134,61 @@ func TestChatResponseErrorFromMessageType(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDetectPostgreSQLAutoHandoff(t *testing.T) {
+	reply := `
+根因证据状态: 需联动
+下一步路径: 联动 PostgreSQL
+核心结论: HikariCP 返回 Connection is closed，需要数据库侧补证。
+`
+	decision, ok := detectPostgreSQLAutoHandoff(reply)
+	if !ok {
+		t.Fatalf("expected PostgreSQL auto handoff to be detected")
+	}
+	if decision.targetModule != "postgresql" {
+		t.Fatalf("unexpected target module %q", decision.targetModule)
+	}
+}
+
+func TestDetectPostgreSQLAutoHandoffRequiresPostgreSQLTarget(t *testing.T) {
+	reply := `
+根因证据状态: 需联动
+下一步路径: 联动 gateway
+`
+	if _, ok := detectPostgreSQLAutoHandoff(reply); ok {
+		t.Fatalf("expected non-PostgreSQL handoff to be ignored")
+	}
+}
+
+func TestBuildPostgreSQLAutoHandoffPromptIsCompactAndActionable(t *testing.T) {
+	decision := autoHandoffDecision{
+		targetModule: "postgresql",
+		reason:       "根因证据状态=需联动，目标模块=postgresql",
+	}
+	prompt := buildPostgreSQLAutoHandoffPrompt(
+		"分析最近一个小时日志，pod=backend-abc",
+		"根因证据状态: 需联动\n核心结论: HikariCP Connection is closed\n下一步路径: 联动 PostgreSQL",
+		decision,
+	)
+	for _, want := range []string{
+		"继续执行 PostgreSQL 模块",
+		"postgresql_stat_activity_log",
+		"分析链",
+		"1200 字以内",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected prompt to contain %q, got %q", want, prompt)
+		}
+	}
+}
+
+func TestFormatAutoHandoffFinalReplyLimitsLength(t *testing.T) {
+	longReply := strings.Repeat("数据库连接异常", 1000)
+	got := formatAutoHandoffFinalReply(longReply)
+	if !strings.HasPrefix(got, "已自动联动 PostgreSQL 补证。") {
+		t.Fatalf("expected auto handoff prefix, got %q", got[:min(len(got), 40)])
+	}
+	if !strings.Contains(got, "自动联动报告已按钉钉阅读长度压缩") {
+		t.Fatalf("expected compression notice")
+	}
+}

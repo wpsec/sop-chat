@@ -27,15 +27,20 @@ import (
 
 // atMentionPattern 匹配 @xxx 格式（用于从 text 消息中去掉 @机器人 前缀）
 var atMentionPattern = regexp.MustCompile(`@\S+\s*`)
+var autoHandoffNeedsStatusPattern = regexp.MustCompile(`(?i)(root_cause_evidence_status\s*[:：=]\s*needs_handoff|根因证据状态\s*[:：=]\s*需联动|证据状态\s*[:：=]\s*需联动)`)
+var autoHandoffPostgreSQLPattern = regexp.MustCompile("(?i)(postgresql|postgres|pg[-_ ]?(stat|replication|internal)|联动\\s*postgresql|进入\\s*`?postgresql)")
 
 // workerQueueSize 是每个串行队列允许积压的最大消息数
 const workerQueueSize = 8
 
 const (
-	maxMarkdownProgressUpdates = 4
-	maxCardProgressStages      = 6
-	cancelAnalysisReplyText    = "已取消本次分析，你可以重新提问。"
-	noRunningAnalysisReplyText = "当前没有正在进行的分析任务。"
+	maxMarkdownProgressUpdates  = 4
+	maxCardProgressStages       = 6
+	maxAutoHandoffDepth         = 1
+	maxAutoHandoffEvidenceRunes = 3000
+	maxAutoHandoffReplyRunes    = 3600
+	cancelAnalysisReplyText     = "已取消本次分析，你可以重新提问。"
+	noRunningAnalysisReplyText  = "当前没有正在进行的分析任务。"
 )
 
 var errEmptyEmployeeReply = errors.New("数字员工未返回可展示内容，请稍后重试")
@@ -57,6 +62,11 @@ type chatStreamDiagnostics struct {
 
 type runningTask struct {
 	cancel context.CancelFunc
+}
+
+type autoHandoffDecision struct {
+	targetModule string
+	reason       string
 }
 
 type markdownProgressReporter struct {
@@ -533,6 +543,140 @@ func renderCardProgressContent(progressFeedbackEnabled bool, stages []string, re
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+func detectPostgreSQLAutoHandoff(replyText string) (autoHandoffDecision, bool) {
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" {
+		return autoHandoffDecision{}, false
+	}
+	if !hasNeedsHandoffStatus(replyText) || !autoHandoffPostgreSQLPattern.MatchString(replyText) {
+		return autoHandoffDecision{}, false
+	}
+	return autoHandoffDecision{
+		targetModule: "postgresql",
+		reason:       "根因证据状态=需联动，目标模块=postgresql",
+	}, true
+}
+
+func hasNeedsHandoffStatus(replyText string) bool {
+	if autoHandoffNeedsStatusPattern.MatchString(replyText) {
+		return true
+	}
+	normalized := strings.ToLower(replyText)
+	replacer := strings.NewReplacer(
+		" ", "",
+		"\n", "",
+		"\t", "",
+		"|", "",
+		"`", "",
+		"*", "",
+		"：", ":",
+		"＝", "=",
+	)
+	normalized = replacer.Replace(normalized)
+	return strings.Contains(normalized, "root_cause_evidence_status=needs_handoff") ||
+		strings.Contains(normalized, "根因证据状态:需联动") ||
+		strings.Contains(normalized, "证据状态:需联动") ||
+		(strings.Contains(normalized, "根因证据状态") && strings.Contains(normalized, "需联动"))
+}
+
+func buildPostgreSQLAutoHandoffPrompt(originalQuestion, firstReply string, decision autoHandoffDecision) string {
+	originalQuestion = limitRunes(strings.TrimSpace(originalQuestion), 1200)
+	evidence := extractAutoHandoffEvidence(firstReply, maxAutoHandoffEvidenceRunes)
+	if evidence == "" {
+		evidence = "上一轮回答未能抽取到结构化摘要，请沿用当前线程上下文继续补证。"
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(`自动联动任务：上一轮 backend 分析已输出“%s”。请继续执行 PostgreSQL 模块的 SLS 日志分析，不要只给联动建议。
+
+原始问题：
+%s
+
+backend 已确认事实（精简摘录）：
+%s
+
+执行要求：
+1. 沿用上一轮时间窗口；若无法识别，使用用户原始问题中的时间范围。
+2. 必须优先查询 postgresql-log / postgresql_stat_activity_log、postgresql_replication_slots_monitor_log、internal-diagnostic_log 中可用的数据源，围绕应用连接、事务状态、等待事件、数据库重启或诊断异常补证。
+3. 如果 PostgreSQL 查询失败、无权限、无数据源或工具不可用，明确写失败的数据源和原因，此时才写“根因证据状态：需联动”。
+4. 输出控制在 1200 字以内，固定使用“结论 / 分析链 / 关键证据 / 仍缺证据 / 下一步动作”五段。
+5. 分析链必须一眼看出：backend 症状 -> PostgreSQL 补证 -> 当前结论或证据缺口；不要重复上一轮完整报告。`, decision.reason, originalQuestion, evidence))
+}
+
+func extractAutoHandoffEvidence(replyText string, maxRunes int) string {
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" || maxRunes <= 0 {
+		return ""
+	}
+	keywords := []string{
+		"根因", "证据状态", "已确认", "下一", "PostgreSQL", "postgresql",
+		"Hikari", "Connection is closed", "datasource", "connection pool",
+		"连接池", "数据库", "SQL", "ERROR", "WARN", "pod", "namespace",
+		"logstore", "project", "时间", "class_method", "Mapper",
+	}
+	lines := strings.Split(replyText, "\n")
+	selected := make([]string, 0, 24)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, keyword := range keywords {
+			if strings.Contains(line, keyword) {
+				selected = append(selected, line)
+				break
+			}
+		}
+		if len(selected) >= 24 {
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return limitRunes(replyText, maxRunes)
+	}
+	return limitRunes(strings.Join(selected, "\n"), maxRunes)
+}
+
+func formatAutoHandoffFinalReply(replyText string) string {
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" {
+		return ""
+	}
+	return "已自动联动 PostgreSQL 补证。\n\n" + limitRunesWithNotice(replyText, maxAutoHandoffReplyRunes)
+}
+
+func appendAutoHandoffFailure(replyText string, err error) string {
+	note := "自动联动 PostgreSQL 未完成"
+	if err != nil {
+		note += "：" + errorMessage(err)
+	}
+	note += "。已保留 backend 分析结果；请稍后直接进入 PostgreSQL 模块补查同一时间窗口。"
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" {
+		return note
+	}
+	return replyText + "\n\n" + note
+}
+
+func limitRunesWithNotice(text string, maxRunes int) string {
+	limited := limitRunes(text, maxRunes)
+	if limited == strings.TrimSpace(text) {
+		return limited
+	}
+	return limited + "\n\n（自动联动报告已按钉钉阅读长度压缩，完整过程可通过会话链接查看。）"
+}
+
+func limitRunes(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return strings.TrimSpace(string(runes[:maxRunes]))
+}
+
 func (b *Bot) buildShareURL(route resolvedRoute, threadID string) string {
 	threadID = strings.TrimSpace(threadID)
 	employeeName := strings.TrimSpace(route.employeeName)
@@ -863,6 +1007,22 @@ type resolvedRoute struct {
 	workspace      string
 	region         string
 	clientConfig   *config.ClientConfig
+}
+
+func (r resolvedRoute) effectiveProduct() string {
+	if strings.TrimSpace(r.product) != "" {
+		return r.product
+	}
+	if r.clientConfig != nil && strings.TrimSpace(r.clientConfig.Product) != "" {
+		return r.clientConfig.Product
+	}
+	if strings.TrimSpace(r.project) != "" {
+		return "sls"
+	}
+	if strings.TrimSpace(r.workspace) != "" {
+		return "cms"
+	}
+	return ""
 }
 
 // resolveRoute 根据群名称匹配路由规则，返回应处理本次消息的路由信息。
@@ -1340,9 +1500,61 @@ func (b *Bot) streamEmployeeWithRoute(
 	}
 }
 
+func (b *Bot) streamEmployeeWithAutoHandoff(
+	ctx context.Context,
+	message, threadId string,
+	route resolvedRoute,
+	onUpdate func(chatProgressUpdate),
+) (string, string, error) {
+	replyText, returnedThreadID, err := b.streamEmployeeWithRoute(ctx, message, threadId, route, onUpdate)
+	if err != nil {
+		return replyText, returnedThreadID, err
+	}
+
+	if !config.IsSlsProduct(route.effectiveProduct()) {
+		return replyText, returnedThreadID, nil
+	}
+
+	currentThreadID := strings.TrimSpace(returnedThreadID)
+	if currentThreadID == "" {
+		currentThreadID = threadId
+	}
+	currentReply := replyText
+
+	for depth := 0; depth < maxAutoHandoffDepth; depth++ {
+		decision, ok := detectPostgreSQLAutoHandoff(currentReply)
+		if !ok {
+			break
+		}
+		if onUpdate != nil {
+			onUpdate(chatProgressUpdate{
+				Stage:       "已识别 PostgreSQL 联动条件，正在继续补证",
+				Accumulated: currentReply,
+			})
+		}
+
+		handoffPrompt := buildPostgreSQLAutoHandoffPrompt(message, currentReply, decision)
+		handoffReply, handoffThreadID, handoffErr := b.streamEmployeeWithRoute(ctx, handoffPrompt, currentThreadID, route, onUpdate)
+		if handoffErr != nil {
+			if errors.Is(handoffErr, context.Canceled) {
+				return "", currentThreadID, handoffErr
+			}
+			log.Printf("[DingTalk] 自动联动 PostgreSQL 失败: %v", handoffErr)
+			return appendAutoHandoffFailure(currentReply, handoffErr), currentThreadID, nil
+		}
+		if strings.TrimSpace(handoffThreadID) != "" {
+			currentThreadID = handoffThreadID
+		}
+		currentReply = formatAutoHandoffFinalReply(handoffReply)
+		break
+	}
+
+	return currentReply, currentThreadID, nil
+}
+
 // queryEmployeeWithRoute 向 CMS 数字员工发送消息，使用路由级别的 product/project/workspace。
 func (b *Bot) queryEmployeeWithRoute(ctx context.Context, message, threadId string, route resolvedRoute) (string, string, error) {
-	return b.streamEmployeeWithRoute(ctx, message, threadId, route, nil)
+	return b.streamEmployeeWithAutoHandoff(ctx, message, threadId, route, nil)
 }
 
 // queryEmployeeStreaming 向 CMS 数字员工发送消息，通过 onUpdate 回调上报阶段进度与累积输出。
@@ -1352,7 +1564,7 @@ func (b *Bot) queryEmployeeStreaming(
 	route resolvedRoute,
 	onUpdate func(chatProgressUpdate),
 ) (string, string, error) {
-	return b.streamEmployeeWithRoute(ctx, message, threadId, route, onUpdate)
+	return b.streamEmployeeWithAutoHandoff(ctx, message, threadId, route, onUpdate)
 }
 
 // errCardCreate 是卡片创建失败的 sentinel error，用于区分降级场景

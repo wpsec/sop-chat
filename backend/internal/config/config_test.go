@@ -202,6 +202,12 @@ func TestApplyReplyStyleInstruction(t *testing.T) {
 	if !strings.Contains(concise, "简洁") {
 		t.Fatalf("expected concise instruction to be appended, got %q", concise)
 	}
+	if !strings.Contains(concise, ConciseSOPReplyInstruction) {
+		t.Fatalf("expected SLS concise mode to preserve full SOP execution, got %q", concise)
+	}
+	if !strings.Contains(concise, "简洁只影响最终表达") {
+		t.Fatalf("expected concise SOP instruction to say concise output must not reduce checks, got %q", concise)
+	}
 	if !strings.Contains(concise, "结论 / 依据 / 不确定项 / 下一步建议") {
 		t.Fatalf("expected concise high-risk instruction to be appended, got %q", concise)
 	}
@@ -216,6 +222,9 @@ func TestApplyReplyStyleInstructionUsesPerMessageReplyStyleDirective(t *testing.
 	concise := ApplyReplyStyleInstruction("简洁回复：请分析今天的告警", false, "sls")
 	if !strings.Contains(concise, ConciseReplyInstruction) {
 		t.Fatalf("expected concise directive to enable concise reply, got %q", concise)
+	}
+	if !strings.Contains(concise, ConciseSOPReplyInstruction) {
+		t.Fatalf("expected concise directive to keep SLS SOP execution constraints, got %q", concise)
 	}
 	if strings.Contains(concise, StandardSOPReplyInstruction) {
 		t.Fatalf("expected concise directive not to append full SOP instruction, got %q", concise)
@@ -249,6 +258,23 @@ func TestApplyReplyStyleInstructionWithSourceIgnoresEnrichedPromptDirectives(t *
 	)
 	if !strings.Contains(got, ConciseReplyInstruction) {
 		t.Fatalf("expected default concise setting to remain effective, got %q", got)
+	}
+	if !strings.Contains(got, ConciseSOPReplyInstruction) {
+		t.Fatalf("expected default concise SLS mode to keep SOP execution constraints, got %q", got)
+	}
+}
+
+func TestSLSConciseReplyDoesNotPermitSkippingWAFEvidence(t *testing.T) {
+	got := ApplyReplyStyleInstruction("最近24小时，uat环境waf告警情况，简要回复", false, "sls")
+	for _, want := range []string{
+		"简洁只影响最终表达",
+		"不允许减少 SOP 查询步骤",
+		"未查询 / 查询失败",
+		"action、rule_id/attack_type、白名单、bypass_matched_ids",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected SLS concise WAF prompt to contain %q, got %q", want, got)
+		}
 	}
 }
 
