@@ -197,6 +197,9 @@ func TestApplyReplyStyleInstruction(t *testing.T) {
 	if !strings.Contains(full, "结论 / 依据 / 不确定项 / 下一步建议") {
 		t.Fatalf("expected high-risk structured instruction, got %q", full)
 	}
+	if !strings.Contains(full, "Markdown 表格必须独立成段") {
+		t.Fatalf("expected report markdown formatting instruction, got %q", full)
+	}
 
 	concise := ApplyReplyStyleInstruction("请分析今天的告警", true, "sls")
 	if !strings.Contains(concise, "简洁") {
@@ -229,6 +232,9 @@ func TestApplyReplyStyleInstructionUsesPerMessageReplyStyleDirective(t *testing.
 	if strings.Contains(concise, StandardSOPReplyInstruction) {
 		t.Fatalf("expected concise directive not to append full SOP instruction, got %q", concise)
 	}
+	if strings.Contains(concise, ReportMarkdownFormattingInstruction) {
+		t.Fatalf("expected concise directive not to append markdown report formatting instruction, got %q", concise)
+	}
 
 	full := ApplyReplyStyleInstruction("请详细分析今天的告警", true, "sls")
 	if strings.Contains(full, ConciseReplyInstruction) {
@@ -236,6 +242,9 @@ func TestApplyReplyStyleInstructionUsesPerMessageReplyStyleDirective(t *testing.
 	}
 	if !strings.Contains(full, StandardSOPReplyInstruction) {
 		t.Fatalf("expected full directive to append SOP instruction, got %q", full)
+	}
+	if !strings.Contains(full, ReportMarkdownFormattingInstruction) {
+		t.Fatalf("expected full directive to append report formatting instruction, got %q", full)
 	}
 }
 

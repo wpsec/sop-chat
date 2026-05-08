@@ -455,6 +455,8 @@ const (
 	AntiHallucinationBaselineInstruction = "\n\n（回答约束：只基于当前问题、上下文、已授权数据源返回、SOP 文档和工具结果作答；不要编造用户、角色、权限、资源名称、时间、错误码、配置字段、接口返回或执行结果；如果无法确认，请明确写“当前没有足够依据确认”或“需要补充信息”；不要把推测当成事实。）"
 	// HighRiskStructuredReplyInstruction 要求高风险问题使用更保守、更易审阅的结构回答。
 	HighRiskStructuredReplyInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，请优先按“结论 / 依据 / 不确定项 / 下一步建议”回答；没有依据时先说明不能确认，再给排查建议。）"
+	// ReportMarkdownFormattingInstruction 约束完整报告使用可渲染 Markdown，避免 IM/前端展示时表格挤成一行。
+	ReportMarkdownFormattingInstruction = "\n\n（报告排版约束：如果输出报告、表格或时间线，必须使用可渲染 Markdown。Markdown 表格必须独立成段，表格前后各保留一个空行，表头行和分隔行必须完整，不能把“关键发现:”和表格放在同一行；超过 6 列或单元格内容较长时不要用表格，改用分组列表。不要输出空章节、空表格、空项目符号、无法渲染的图片/附件占位符或无意义分隔占位。）"
 	// HighRiskStructuredConciseInstruction 是高风险场景下的简洁结构化回答要求。
 	HighRiskStructuredConciseInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，即使简洁回复也要尽量保留“结论 / 依据 / 不确定项 / 下一步建议”四项，每项一句话即可。）"
 	reportTimeZoneInstructionMarker      = "报告时间约束"
@@ -527,7 +529,7 @@ func ApplyReplyStyleInstructionWithSource(message, originalMessage string, conci
 		if effectiveConciseReply {
 			message += HighRiskStructuredConciseInstruction
 		} else {
-			message += HighRiskStructuredReplyInstruction
+			message += HighRiskStructuredReplyInstruction + ReportMarkdownFormattingInstruction
 		}
 	}
 	if effectiveConciseReply {
