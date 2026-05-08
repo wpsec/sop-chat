@@ -750,6 +750,7 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 	if isCancelCommand(userText) {
 		if b.cancelRunningTask(taskKey) {
 			log.Printf("[DingTalk] 收到取消命令，已取消当前分析 conversationId=%s sender=%s", conversationId, senderNick)
+			b.evictConversationThreads(conversationId, senderNick)
 			_ = replier.SimpleReplyText(ctx, webhook, []byte(cancelAnalysisReplyText))
 		} else {
 			log.Printf("[DingTalk] 收到取消命令，但当前没有运行中的任务 conversationId=%s sender=%s", conversationId, senderNick)
@@ -822,7 +823,11 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				log.Printf("[DingTalk] 分析已取消 conversationId=%s sender=%s", conversationId, senderNick)
+				b.evictThreadForRoute(conversationId, senderNick, route)
 				return
+			}
+			if errors.Is(err, errEmptyEmployeeReply) {
+				b.evictThreadForRoute(conversationId, senderNick, route)
 			}
 			log.Printf("[DingTalk] 调用数字员工失败: %v", err)
 			replyError(asyncCtx, webhook, err)
@@ -994,8 +999,66 @@ func (b *Bot) cancelRunningTask(key string) bool {
 	return true
 }
 
+func (b *Bot) evictConversationThreads(conversationId, senderNick string) {
+	if b == nil || b.threads == nil {
+		return
+	}
+	cfg := b.config()
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.EmployeeName) != "" {
+		b.evictThreadForRoute(conversationId, senderNick, resolvedRoute{
+			employeeName:   cfg.EmployeeName,
+			cloudAccountID: config.NormalizeCloudAccountID(cfg.CloudAccountID),
+			project:        cfg.Project,
+			workspace:      cfg.Workspace,
+			region:         cfg.Region,
+		})
+	}
+	for _, route := range cfg.ConversationRoutes {
+		if strings.TrimSpace(route.EmployeeName) == "" {
+			continue
+		}
+		b.evictThreadForRoute(conversationId, senderNick, resolvedRoute{
+			employeeName:   route.EmployeeName,
+			cloudAccountID: config.NormalizeCloudAccountID(cfg.CloudAccountID),
+			project:        route.Project,
+			workspace:      route.Workspace,
+			region:         route.Region,
+		})
+	}
+	for _, route := range cfg.CloudAccountRoutes {
+		if strings.TrimSpace(route.EmployeeName) == "" {
+			continue
+		}
+		b.evictThreadForRoute(conversationId, senderNick, resolvedRoute{
+			employeeName:   route.EmployeeName,
+			cloudAccountID: config.NormalizeCloudAccountID(route.CloudAccountID),
+			project:        route.Project,
+			workspace:      route.Workspace,
+			region:         route.Region,
+		})
+	}
+}
+
+func (b *Bot) evictThreadForRoute(conversationId, senderNick string, route resolvedRoute) {
+	if b == nil || b.threads == nil || strings.TrimSpace(route.employeeName) == "" {
+		return
+	}
+	cacheKey := threadCacheKeyForRoute(conversationId, senderNick, route)
+	b.threads.Delete(cacheKey)
+	log.Printf("[DingTalk] 已废弃会话 thread 缓存 employee=%s cloudAccountId=%s project=%s workspace=%s",
+		route.employeeName, route.cloudAccountID, route.project, route.workspace)
+}
+
 func threadScope(cloudAccountID, project, workspace, region string) string {
 	return config.NormalizeCloudAccountID(cloudAccountID) + "\x00" + project + "\x00" + workspace + "\x00" + region
+}
+
+func threadCacheKeyForRoute(conversationId, senderNick string, route resolvedRoute) string {
+	scope := threadScope(route.cloudAccountID, route.project, route.workspace, route.region)
+	return threadKey(conversationId, senderNick, route.employeeName) + "\x00" + scope
 }
 
 // resolvedRoute 包含路由解析结果
@@ -1718,12 +1781,16 @@ func (b *Bot) replyWithStreamingCard(
 	finalizeCancel := func() {}
 	if queryErr != nil {
 		if errors.Is(queryErr, context.Canceled) {
+			b.evictThreadForRoute(conversationId, senderNick, route)
 			finalReplyText = cancelAnalysisReplyText
 			if progressFeedbackEnabled {
 				finalStages = appendUniqueStage(stageTrail, "分析已取消，可重新提问", maxCardProgressStages)
 			}
 			finalizeCtx, finalizeCancel = context.WithTimeout(context.Background(), 5*time.Second)
 		} else {
+			if errors.Is(queryErr, errEmptyEmployeeReply) {
+				b.evictThreadForRoute(conversationId, senderNick, route)
+			}
 			finalReplyText = "查询失败: " + queryErr.Error()
 			if progressFeedbackEnabled {
 				finalStages = appendUniqueStage(stageTrail, "分析失败，请查看错误信息", maxCardProgressStages)
@@ -1736,8 +1803,7 @@ func (b *Bot) replyWithStreamingCard(
 
 	// 6. 更新 threadId 缓存
 	if newThreadId != "" && newThreadId != threadId {
-		scope := threadScope(route.cloudAccountID, route.project, route.workspace, route.region)
-		b.threads.Store(threadKey(conversationId, senderNick, route.employeeName)+"\x00"+scope, newThreadId)
+		b.threads.Store(threadCacheKeyForRoute(conversationId, senderNick, route), newThreadId)
 	}
 	return nil
 }

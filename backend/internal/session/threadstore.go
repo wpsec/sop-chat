@@ -144,6 +144,11 @@ func (s *ThreadStore) Store(cacheKey, threadId string) {
 	s.cache.Store(cacheKey+ProcessStartHashSuffix(), threadId)
 }
 
+// Delete 删除指定缓存项。cacheKey 不含 suffix。
+func (s *ThreadStore) Delete(cacheKey string) {
+	s.cache.Delete(cacheKey + ProcessStartHashSuffix())
+}
+
 // Load 从缓存读取。cacheKey 不含 suffix。
 func (s *ThreadStore) Load(cacheKey string) (string, bool) {
 	v, ok := s.cache.Load(cacheKey + ProcessStartHashSuffix())

@@ -9,6 +9,9 @@ import (
 
 	cmsclient "github.com/alibabacloud-go/cms-20240330/v6/client"
 	"github.com/alibabacloud-go/tea/tea"
+
+	"sop-chat/internal/config"
+	"sop-chat/internal/session"
 )
 
 func TestIsCancelCommand(t *testing.T) {
@@ -94,6 +97,53 @@ func TestFinishEmployeeStreamKeepsText(t *testing.T) {
 	}
 	if threadID != "thread-1" {
 		t.Fatalf("expected thread id to be preserved, got %q", threadID)
+	}
+}
+
+func TestEvictThreadForRouteDeletesCachedThread(t *testing.T) {
+	bot := &Bot{threads: session.NewThreadStore("[test]")}
+	route := resolvedRoute{
+		employeeName:   "employee-1",
+		cloudAccountID: "uat",
+		project:        "project-1",
+	}
+	cacheKey := threadCacheKeyForRoute("conversation-1", "sender-1", route)
+	bot.threads.Store(cacheKey, "thread-1")
+
+	if got, ok := bot.threads.Load(cacheKey); !ok || got != "thread-1" {
+		t.Fatalf("expected cached thread before eviction, got %q ok=%v", got, ok)
+	}
+
+	bot.evictThreadForRoute("conversation-1", "sender-1", route)
+	if got, ok := bot.threads.Load(cacheKey); ok {
+		t.Fatalf("expected cached thread to be evicted, got %q", got)
+	}
+}
+
+func TestEvictConversationThreadsDeletesCloudAccountRouteThread(t *testing.T) {
+	bot := &Bot{
+		dtConfig: &config.DingTalkConfig{
+			EmployeeName:   "default-employee",
+			CloudAccountID: "default",
+			CloudAccountRoutes: []config.CloudAccountRoute{
+				{
+					CloudAccountID: "uat",
+					EmployeeName:   "employee-uat",
+				},
+			},
+		},
+		threads: session.NewThreadStore("[test]"),
+	}
+	route := resolvedRoute{
+		employeeName:   "employee-uat",
+		cloudAccountID: "uat",
+	}
+	cacheKey := threadCacheKeyForRoute("conversation-1", "sender-1", route)
+	bot.threads.Store(cacheKey, "thread-uat")
+
+	bot.evictConversationThreads("conversation-1", "sender-1")
+	if got, ok := bot.threads.Load(cacheKey); ok {
+		t.Fatalf("expected cloud account route thread to be evicted, got %q", got)
 	}
 }
 
