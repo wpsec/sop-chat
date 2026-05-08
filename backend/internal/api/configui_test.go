@@ -34,10 +34,11 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 
 	req := configUIResponse{
 		Server: configUIServer{
-			Host:     "127.0.0.1",
-			Port:     9090,
-			TimeZone: "Asia/Shanghai",
-			Language: "zh",
+			Host:           "127.0.0.1",
+			Port:           9090,
+			TimeZone:       "Asia/Tokyo",
+			ReportTimeZone: "Asia/Shanghai",
+			Language:       "zh",
 		},
 		CloudAccounts: []configUICloudAccount{
 			{
@@ -92,6 +93,9 @@ func TestBuildConfigFromUIPreservesLegacyContextAndAuthProviders(t *testing.T) {
 
 	if cfg.Server.Port != 9090 || cfg.Server.Host != "127.0.0.1" {
 		t.Fatalf("expected server settings to be updated, got %+v", cfg.Server)
+	}
+	if cfg.Server.TimeZone != "Asia/Tokyo" || cfg.Server.ReportTimeZone != "Asia/Shanghai" {
+		t.Fatalf("expected server time zone settings to be updated, got %+v", cfg.Server)
 	}
 	if cfg.Global.Product != "cms" || cfg.Global.Workspace != "legacy-workspace" || cfg.Global.Region != "cn-shanghai" {
 		t.Fatalf("expected legacy product context to be preserved, got %+v", cfg.Global)

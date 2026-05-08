@@ -45,6 +45,7 @@ type ServerConfig struct {
 	Port                int    `yaml:"port,omitempty"`                // 服务监听端口，默认 8080
 	PublicBaseURL       string `yaml:"publicBaseURL,omitempty"`       // 对外访问地址，用于生成分享链接
 	TimeZone            string `yaml:"timeZone,omitempty"`            // 时区设置
+	ReportTimeZone      string `yaml:"reportTimeZone,omitempty"`      // 报告中的时间统一呈现时区，默认跟随 timeZone
 	Language            string `yaml:"language,omitempty"`            // 语言设置
 	SOPWorkflowRoot     string `yaml:"sopWorkflowRoot,omitempty"`     // 本地 SOP 工作流仓库路径
 	BindThreadToProcess *bool  `yaml:"bindThreadToProcess,omitempty"` // 是否将 thread 绑定到进程生命周期
@@ -424,6 +425,7 @@ type GlobalConfig struct {
 	Host            string `yaml:"host,omitempty"`     // legacy 服务监听地址
 	Port            int    `yaml:"port,omitempty"`     // legacy 服务监听端口
 	TimeZone        string `yaml:"timeZone,omitempty"` // legacy 时区设置
+	ReportTimeZone  string `yaml:"reportTimeZone,omitempty"`
 	Language        string `yaml:"language,omitempty"` // legacy 语言设置
 	// legacy thread 生命周期开关：新配置应写在 server.bindThreadToProcess。
 	BindThreadToProcess *bool `yaml:"bindThreadToProcess,omitempty"`
@@ -455,6 +457,7 @@ const (
 	HighRiskStructuredReplyInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，请优先按“结论 / 依据 / 不确定项 / 下一步建议”回答；没有依据时先说明不能确认，再给排查建议。）"
 	// HighRiskStructuredConciseInstruction 是高风险场景下的简洁结构化回答要求。
 	HighRiskStructuredConciseInstruction = "\n\n（如果问题涉及权限、认证、配置、生产变更、资源状态、审计、安全、故障归因或运维操作，即使简洁回复也要尽量保留“结论 / 依据 / 不确定项 / 下一步建议”四项，每项一句话即可。）"
+	reportTimeZoneInstructionMarker      = "报告时间约束"
 )
 
 // NormalizeProduct 将 product 规范为 cms 或 sls（大小写与空白容错）。
@@ -537,6 +540,42 @@ func ApplyReplyStyleInstructionWithSource(message, originalMessage string, conci
 		return message + StandardSOPReplyInstruction
 	}
 	return message
+}
+
+// ApplyReportTimeZoneInstruction 要求最终报告按配置时区呈现时间，避免工具返回 UTC 时被原样写入结论。
+func ApplyReportTimeZoneInstruction(message, reportTimeZone string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return ""
+	}
+	reportTimeZone = strings.TrimSpace(reportTimeZone)
+	if reportTimeZone == "" {
+		return trimmed
+	}
+	if strings.Contains(trimmed, reportTimeZoneInstructionMarker) {
+		return trimmed
+	}
+	displayName := reportTimeZoneDisplayName(reportTimeZone)
+	return trimmed + fmt.Sprintf(
+		"\n\n（%s：最终报告、结论、证据摘要、时间线和表格主列中的时间必须统一按 %s 展示，主报告格式使用 YYYY-MM-DD HH:mm:ss（%s），不要使用 2026-05-08 20:28:08+08:00 这类 offset 后缀作为主显示。工具或 SLS 返回中带 Z、UTC、+00:00 或与 %s 不一致 offset 的时间，必须先换算到 %s；如果原始时间已经是 %s 或目标时区，只做格式规范化，不要重复加减时差。必要时在证据详情用“原始时间：...”保留原值，但不要把 UTC 原文直接当作报告时间。）",
+		reportTimeZoneInstructionMarker,
+		reportTimeZone,
+		displayName,
+		reportTimeZone,
+		reportTimeZone,
+		displayName,
+	)
+}
+
+func reportTimeZoneDisplayName(reportTimeZone string) string {
+	switch strings.TrimSpace(reportTimeZone) {
+	case "Asia/Shanghai":
+		return "北京时间"
+	case "UTC", "Etc/UTC", "Etc/GMT":
+		return "UTC"
+	default:
+		return strings.TrimSpace(reportTimeZone)
+	}
 }
 
 // ResolveConciseReply 返回当前问题最终是否使用简洁回复。
@@ -746,6 +785,7 @@ func DefaultConfig() *Config {
 			Host:                "0.0.0.0",
 			Port:                8080,
 			TimeZone:            "Asia/Shanghai",
+			ReportTimeZone:      "Asia/Shanghai",
 			Language:            "zh",
 			BindThreadToProcess: &bindThread,
 		},
@@ -851,6 +891,7 @@ func (c *Config) expandEnvVars() {
 	// 展开 Server 配置中的环境变量
 	c.Server.Host = expandEnvVar(c.Server.Host)
 	c.Server.TimeZone = expandEnvVar(c.Server.TimeZone)
+	c.Server.ReportTimeZone = expandEnvVar(c.Server.ReportTimeZone)
 	c.Server.Language = expandEnvVar(c.Server.Language)
 
 	// 展开 legacy Global 配置中的环境变量
@@ -859,6 +900,7 @@ func (c *Config) expandEnvVars() {
 	c.Global.Endpoint = expandEnvVar(c.Global.Endpoint)
 	c.Global.Host = expandEnvVar(c.Global.Host)
 	c.Global.TimeZone = expandEnvVar(c.Global.TimeZone)
+	c.Global.ReportTimeZone = expandEnvVar(c.Global.ReportTimeZone)
 	c.Global.Language = expandEnvVar(c.Global.Language)
 	c.Global.Product = expandEnvVar(c.Global.Product)
 
@@ -992,6 +1034,9 @@ func (c *Config) applyCompatibilityDefaults() {
 	}
 	if c.Server.TimeZone == "" {
 		c.Server.TimeZone = c.Global.TimeZone
+	}
+	if c.Server.ReportTimeZone == "" {
+		c.Server.ReportTimeZone = c.Global.ReportTimeZone
 	}
 	if c.Server.Language == "" {
 		c.Server.Language = c.Global.Language
@@ -1555,6 +1600,17 @@ func (c *Config) GetTimeZone() string {
 		return c.Global.TimeZone
 	}
 	return "Asia/Shanghai"
+}
+
+// GetReportTimeZone 获取报告时间呈现时区；未配置时跟随服务时区。
+func (c *Config) GetReportTimeZone() string {
+	if c.Server.ReportTimeZone != "" {
+		return c.Server.ReportTimeZone
+	}
+	if c.Global.ReportTimeZone != "" {
+		return c.Global.ReportTimeZone
+	}
+	return c.GetTimeZone()
 }
 
 // GetLanguage 获取语言配置（如果未配置则返回默认值 "zh"）

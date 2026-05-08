@@ -289,6 +289,11 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
         <label>时区 TimeZone</label>
         <input type="text" id="g-tz" placeholder="Asia/Shanghai">
       </div>
+      <div class="field">
+        <label>报告时区 Report TimeZone</label>
+        <input type="text" id="g-report-tz" placeholder="Asia/Shanghai">
+        <span class="hint">控制数字员工最终报告中的时间呈现；留空时跟随 TimeZone。主报告会要求使用“YYYY-MM-DD HH:mm:ss（时区）”格式。</span>
+      </div>
       <div class="field" style="grid-column:1/-1">
         <div class="toggle-row" style="margin-bottom:0">
           <div style="flex:1">
@@ -308,6 +313,7 @@ textarea.prompt-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(
     <strong>保存后立即生效：</strong>
     <span class="badge-hot">cloudAccounts</span>
     <span class="badge-hot">timeZone</span>
+    <span class="badge-hot">reportTimeZone</span>
     <span class="badge-hot">language</span>
     <span class="badge-hot">bindThreadToProcess</span>
     <span class="badge-hot">publicBaseURL</span>
@@ -2425,6 +2431,7 @@ function populate(data) {
   setVal('g-port', g.port || 8080);
   setVal('g-public-base-url', g.publicBaseURL || '');
   setVal('g-tz', g.timeZone || 'Asia/Shanghai');
+  setVal('g-report-tz', g.reportTimeZone || g.timeZone || 'Asia/Shanghai');
   setVal('g-lang', g.language || 'zh');
   document.getElementById('g-bind-thread-to-process').checked =
     g.bindThreadToProcess !== false;
@@ -2470,6 +2477,7 @@ function collect() {
       port:            parseInt(val('g-port')) || 8080,
       publicBaseURL:   val('g-public-base-url') || '',
       timeZone:        val('g-tz') || 'Asia/Shanghai',
+      reportTimeZone:  val('g-report-tz') || val('g-tz') || 'Asia/Shanghai',
       language:        val('g-lang') || 'zh',
       bindThreadToProcess: document.getElementById('g-bind-thread-to-process').checked,
     },

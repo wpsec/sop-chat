@@ -151,7 +151,16 @@ func (s *Scheduler) runTask(task config.ScheduledTaskConfig) {
 	taskRegion := task.Region
 	taskCloudAccountID := config.NormalizeCloudAccountID(task.CloudAccountID)
 
-	prompt := config.ApplyReplyStyleInstruction(task.Prompt, task.ConciseReply, taskProduct)
+	reportTimeZone := "Asia/Shanghai"
+	if globalCfg != nil {
+		reportTimeZone = globalCfg.GetReportTimeZone()
+	} else if s.timezone != nil {
+		reportTimeZone = s.timezone.String()
+	}
+	prompt := config.ApplyReportTimeZoneInstruction(
+		config.ApplyReplyStyleInstruction(task.Prompt, task.ConciseReply, taskProduct),
+		reportTimeZone,
+	)
 	promptLog := promptForLog(task.Prompt, 1200)
 
 	log.Printf("[Scheduler] ========== 任务触发 ==========")
@@ -181,7 +190,7 @@ func (s *Scheduler) runTask(task config.ScheduledTaskConfig) {
 		return
 	}
 
-	reply, err := queryEmployee(clientCfg, task.Name, task.EmployeeName, prompt, s.timezone, taskProduct, taskProject, taskWorkspace, taskRegion)
+	reply, err := queryEmployee(clientCfg, task.Name, task.EmployeeName, prompt, s.timezone, taskProduct, taskProject, taskWorkspace, taskRegion, reportTimeZone)
 	if err != nil {
 		log.Printf("[Scheduler] 任务 %q product=%q 问题=%s 查询数字员工失败: %v", task.Name, taskProduct, promptLog, err)
 		return
@@ -209,16 +218,16 @@ func (s *Scheduler) runTask(task config.ScheduledTaskConfig) {
 
 // QueryEmployee 向数字员工发送消息，等待完整响应并返回文本（公开，供外部触发测试使用）
 func QueryEmployee(clientCfg *config.ClientConfig, employeeName, message string) (string, error) {
-	return queryEmployee(clientCfg, "手动触发", employeeName, message, time.Local, clientCfg.Product, "", "", "")
+	return queryEmployee(clientCfg, "手动触发", employeeName, message, time.Local, clientCfg.Product, "", "", "", locationName(time.Local))
 }
 
 // QueryEmployeeWithVariables 向数字员工发送消息，支持指定 product/project/workspace/region
-func QueryEmployeeWithVariables(clientCfg *config.ClientConfig, employeeName, message, product, project, workspace, region string) (string, error) {
-	return queryEmployee(clientCfg, "手动触发", employeeName, message, time.Local, product, project, workspace, region)
+func QueryEmployeeWithVariables(clientCfg *config.ClientConfig, employeeName, message, product, project, workspace, region, reportTimeZone string) (string, error) {
+	return queryEmployee(clientCfg, "手动触发", employeeName, message, time.Local, product, project, workspace, region, reportTimeZone)
 }
 
 // queryEmployee 向数字员工发送消息，等待完整响应并返回文本
-func queryEmployee(clientCfg *config.ClientConfig, taskName, employeeName, message string, loc *time.Location, product, project, workspace, region string) (string, error) {
+func queryEmployee(clientCfg *config.ClientConfig, taskName, employeeName, message string, loc *time.Location, product, project, workspace, region, reportTimeZone string) (string, error) {
 	msgLog := promptForLog(message, 1200)
 	msgShort := promptForLog(message, 300)
 	log.Printf("[Scheduler] queryEmployee 开始: task=%q employee=%q product=%q 问题=%s", taskName, employeeName, product, msgLog)
@@ -249,10 +258,14 @@ func queryEmployee(clientCfg *config.ClientConfig, taskName, employeeName, messa
 	threadId := *threadResp.Body.ThreadId
 	log.Printf("[Scheduler] queryEmployee product=%q 问题=%s 线程创建成功: threadId=%s", product, msgShort, threadId)
 	nowTS := time.Now().Unix()
+	timeZoneName := locationName(loc)
 	variables := map[string]interface{}{
 		"timeStamp": fmt.Sprintf("%d", nowTS),
-		"timeZone":  "Asia/Shanghai",
+		"timeZone":  timeZoneName,
 		"language":  "zh",
+	}
+	if strings.TrimSpace(reportTimeZone) != "" {
+		variables["reportTimeZone"] = strings.TrimSpace(reportTimeZone)
 	}
 	// 根据 product 配置决定是否附加 skill=sop
 	if config.IsSlsProduct(product) {
@@ -398,4 +411,15 @@ func promptForLog(s string, maxRunes int) string {
 // PromptForLog 与定时任务日志使用相同截断规则，供 API 层打印「问题」字段。
 func PromptForLog(s string, maxRunes int) string {
 	return promptForLog(s, maxRunes)
+}
+
+func locationName(loc *time.Location) string {
+	if loc == nil {
+		return "Asia/Shanghai"
+	}
+	name := strings.TrimSpace(loc.String())
+	if name == "" || name == "Local" {
+		return "Asia/Shanghai"
+	}
+	return name
 }

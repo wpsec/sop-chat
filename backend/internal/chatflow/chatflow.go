@@ -25,9 +25,19 @@ func Prepare(globalCfg *config.Config, message string, concise bool, timeZone, l
 		}
 	}
 
+	reportTimeZone := timeZone
+	if globalCfg != nil {
+		reportTimeZone = globalCfg.GetReportTimeZone()
+	}
+	messageWithStyle := config.ApplyReplyStyleInstructionWithSource(enrichedMessage, trimmed, concise, ctx.Product)
+	variables := BuildVariables(timeZone, language, ctx)
+	if strings.TrimSpace(reportTimeZone) != "" {
+		variables["reportTimeZone"] = reportTimeZone
+	}
+
 	return &PreparedRequest{
-		Message:   config.ApplyReplyStyleInstructionWithSource(enrichedMessage, trimmed, concise, ctx.Product),
-		Variables: BuildVariables(timeZone, language, ctx),
+		Message:   config.ApplyReportTimeZoneInstruction(messageWithStyle, reportTimeZone),
+		Variables: variables,
 		Plan:      plan,
 	}, planErr
 }

@@ -288,6 +288,32 @@ func TestApplyReplyStyleInstructionDoesNotForceHighRiskStructureForLowRiskMessag
 	}
 }
 
+func TestApplyReportTimeZoneInstruction(t *testing.T) {
+	got := ApplyReportTimeZoneInstruction("请分析日志", "Asia/Shanghai")
+	for _, want := range []string{"报告时间约束", "Asia/Shanghai", "YYYY-MM-DD HH:mm:ss（北京时间）", "不要重复加减时差", "不要使用 2026-05-08 20:28:08+08:00"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected report time zone instruction to contain %q, got %q", want, got)
+		}
+	}
+
+	again := ApplyReportTimeZoneInstruction(got, "Asia/Shanghai")
+	if again != got {
+		t.Fatalf("expected report time zone instruction not to be duplicated")
+	}
+}
+
+func TestGetReportTimeZoneFallsBackToTimeZone(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{TimeZone: "Asia/Tokyo"}}
+	if got := cfg.GetReportTimeZone(); got != "Asia/Tokyo" {
+		t.Fatalf("expected report time zone to follow server timeZone, got %q", got)
+	}
+
+	cfg.Server.ReportTimeZone = "Asia/Shanghai"
+	if got := cfg.GetReportTimeZone(); got != "Asia/Shanghai" {
+		t.Fatalf("expected explicit report time zone, got %q", got)
+	}
+}
+
 func TestIsHighRiskQuestion(t *testing.T) {
 	if !IsHighRiskQuestion("请检查这个用户是否有 admin 权限") {
 		t.Fatalf("expected permission question to be high risk")

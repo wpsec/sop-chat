@@ -118,6 +118,7 @@ type configUIServer struct {
 	Port                int    `json:"port"`
 	PublicBaseURL       string `json:"publicBaseURL"`
 	TimeZone            string `json:"timeZone"`
+	ReportTimeZone      string `json:"reportTimeZone"`
 	Language            string `json:"language"`
 	BindThreadToProcess *bool  `json:"bindThreadToProcess,omitempty"`
 }
@@ -564,6 +565,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 		cfg.Server.Port = req.Server.Port
 		cfg.Server.PublicBaseURL = strings.TrimSpace(req.Server.PublicBaseURL)
 		cfg.Server.TimeZone = req.Server.TimeZone
+		cfg.Server.ReportTimeZone = req.Server.ReportTimeZone
 		cfg.Server.Language = req.Server.Language
 		if req.Server.BindThreadToProcess != nil {
 			cfg.Server.BindThreadToProcess = req.Server.BindThreadToProcess
@@ -572,6 +574,7 @@ func buildConfigFromUI(existing *config.Config, req configUIResponse, presence c
 		cfg.Global.Host = ""
 		cfg.Global.Port = 0
 		cfg.Global.TimeZone = ""
+		cfg.Global.ReportTimeZone = ""
 		cfg.Global.Language = ""
 		cfg.Global.BindThreadToProcess = nil
 	}
@@ -973,11 +976,12 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 
 	resp := configUIResponse{
 		Server: configUIServer{
-			Host:          cfg.GetHost(),
-			Port:          cfg.GetPort(),
-			PublicBaseURL: cfg.Server.PublicBaseURL,
-			TimeZone:      cfg.GetTimeZone(),
-			Language:      cfg.GetLanguage(),
+			Host:           cfg.GetHost(),
+			Port:           cfg.GetPort(),
+			PublicBaseURL:  cfg.Server.PublicBaseURL,
+			TimeZone:       cfg.GetTimeZone(),
+			ReportTimeZone: cfg.GetReportTimeZone(),
+			Language:       cfg.GetLanguage(),
 			BindThreadToProcess: func() *bool {
 				v := cfg.BindThreadToProcess()
 				return &v
@@ -1339,7 +1343,14 @@ func (s *Server) handleTriggerTask(c *gin.Context) {
 	taskProject := req.Project
 	taskWorkspace := req.Workspace
 	taskRegion := req.Region
-	fullPrompt := config.ApplyReplyStyleInstruction(req.Prompt, req.ConciseReply, taskProduct)
+	reportTimeZone := "Asia/Shanghai"
+	if globalCfg != nil {
+		reportTimeZone = globalCfg.GetReportTimeZone()
+	}
+	fullPrompt := config.ApplyReportTimeZoneInstruction(
+		config.ApplyReplyStyleInstruction(req.Prompt, req.ConciseReply, taskProduct),
+		reportTimeZone,
+	)
 	promptLog := scheduler.PromptForLog(req.Prompt, 1200)
 	log.Printf("[trigger-task] task=%q cloudAccountId=%q 使用 product=%q 问题=%s（原始 product=%q 全局=%q workspace=%q project=%q）",
 		req.Name, clientCfg.CloudAccountID, taskProduct, promptLog, req.Product, clientCfg.Product, req.Workspace, req.Project)
@@ -1351,7 +1362,7 @@ func (s *Server) handleTriggerTask(c *gin.Context) {
 	done := make(chan triggerResult, 1)
 
 	go func() {
-		reply, err := scheduler.QueryEmployeeWithVariables(clientCfg, req.EmployeeName, fullPrompt, taskProduct, taskProject, taskWorkspace, taskRegion)
+		reply, err := scheduler.QueryEmployeeWithVariables(clientCfg, req.EmployeeName, fullPrompt, taskProduct, taskProject, taskWorkspace, taskRegion, reportTimeZone)
 		done <- triggerResult{reply: reply, err: err}
 	}()
 
