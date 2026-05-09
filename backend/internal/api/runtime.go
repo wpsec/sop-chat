@@ -9,6 +9,7 @@ import (
 
 type employeeRuntime struct {
 	CloudAccountID string
+	EmployeeName   string
 	ClientConfig   *config.ClientConfig
 	Context        config.ProductContext
 }
@@ -25,8 +26,12 @@ func (s *Server) resolveEmployeeRuntime(employeeName, explicitCloudAccountID, me
 			return nil, options, err
 		}
 
+		resolvedEmployeeName := employeeName
 		ctx := globalCfg.GetLegacyProductContext()
 		ref := findConfiguredEmployeeRef(globalCfg, employeeName, clientCfg.CloudAccountID)
+		if ref == nil {
+			ref = findRoutedConfiguredEmployeeRef(globalCfg, employeeName, clientCfg.CloudAccountID)
+		}
 		if ref == nil && explicitCloudAccountID == "" {
 			if uniqueRef, ok := findUniqueConfiguredEmployeeRefByName(globalCfg, employeeName); ok {
 				if uniqueRef.CloudAccountID != clientCfg.CloudAccountID {
@@ -38,11 +43,13 @@ func (s *Server) resolveEmployeeRuntime(employeeName, explicitCloudAccountID, me
 			}
 		}
 		if ref != nil {
+			resolvedEmployeeName = ref.EmployeeName
 			ctx = config.NewProductContext(ref.Product, ref.Project, ref.Workspace, ref.Region)
 		}
 
 		return &employeeRuntime{
 			CloudAccountID: clientCfg.CloudAccountID,
+			EmployeeName:   resolvedEmployeeName,
 			ClientConfig:   clientCfg,
 			Context:        ctx,
 		}, nil, nil
@@ -51,6 +58,7 @@ func (s *Server) resolveEmployeeRuntime(employeeName, explicitCloudAccountID, me
 	if legacyCfg != nil && legacyCfg.AccessKeyId != "" {
 		return &employeeRuntime{
 			CloudAccountID: config.NormalizeCloudAccountID(explicitCloudAccountID),
+			EmployeeName:   employeeName,
 			ClientConfig: &config.ClientConfig{
 				CloudAccountID:  config.NormalizeCloudAccountID(explicitCloudAccountID),
 				AccessKeyId:     legacyCfg.AccessKeyId,

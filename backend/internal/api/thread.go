@@ -26,6 +26,7 @@ const (
 type CreateThreadRequest struct {
 	EmployeeName   string                 `json:"employeeName" binding:"required"`
 	CloudAccountID string                 `json:"cloudAccountId,omitempty"`
+	Message        string                 `json:"message,omitempty"`
 	Title          string                 `json:"title"`
 	Attributes     map[string]interface{} `json:"attributes"`
 }
@@ -41,7 +42,19 @@ func (s *Server) handleCreateThread(c *gin.Context) {
 		return
 	}
 
-	runtimeCfg, options, err := s.resolveEmployeeRuntime(req.EmployeeName, req.CloudAccountID, "")
+	effectiveCloudAccountID := req.CloudAccountID
+	if strings.TrimSpace(req.Message) != "" {
+		s.mu.RLock()
+		globalCfg := s.globalConfig
+		s.mu.RUnlock()
+		if globalCfg != nil {
+			if matches := globalCfg.MatchCloudAccountIDsByText(req.Message, nil); len(matches) == 1 {
+				effectiveCloudAccountID = matches[0]
+			}
+		}
+	}
+
+	runtimeCfg, options, err := s.resolveEmployeeRuntime(req.EmployeeName, effectiveCloudAccountID, req.Message)
 	if err != nil {
 		log.Printf("Failed to resolve thread runtime: %v", err)
 		statusCode := http.StatusInternalServerError
@@ -58,6 +71,17 @@ func (s *Server) handleCreateThread(c *gin.Context) {
 		c.JSON(statusCode, payload)
 		return
 	}
+	log.Printf(
+		"Creating thread employee=%s resolvedEmployee=%s cloudAccountId=%s product=%s project=%s workspace=%s region=%s endpoint=%s",
+		req.EmployeeName,
+		runtimeCfg.EmployeeName,
+		runtimeCfg.CloudAccountID,
+		runtimeCfg.Context.Product,
+		runtimeCfg.Context.Project,
+		runtimeCfg.Context.Workspace,
+		runtimeCfg.Context.Region,
+		runtimeCfg.ClientConfig.Endpoint,
+	)
 
 	client, err := newSOPChatClientFromClientConfig(runtimeCfg.ClientConfig)
 	if err != nil {
@@ -79,8 +103,8 @@ func (s *Server) handleCreateThread(c *gin.Context) {
 		attributes["user"] = user.Username
 	}
 
-	config := &sopchat.ThreadConfig{
-		EmployeeName: req.EmployeeName,
+	threadConfig := &sopchat.ThreadConfig{
+		EmployeeName: runtimeCfg.EmployeeName,
 		Title:        req.Title,
 		Attributes:   attributes,
 		Project:      runtimeCfg.Context.Project,
@@ -88,7 +112,7 @@ func (s *Server) handleCreateThread(c *gin.Context) {
 		Region:       runtimeCfg.Context.Region,
 	}
 
-	response, err := client.CreateThread(config)
+	response, err := client.CreateThread(threadConfig)
 	if err != nil {
 		log.Printf("Failed to create thread: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -113,6 +137,7 @@ func (s *Server) handleCreateThread(c *gin.Context) {
 		result["requestId"] = *response.Body.RequestId
 	}
 	result["cloudAccountId"] = runtimeCfg.CloudAccountID
+	result["employeeName"] = runtimeCfg.EmployeeName
 
 	c.JSON(http.StatusOK, result)
 }
@@ -189,7 +214,9 @@ func (s *Server) handleListThreads(c *gin.Context) {
 
 	threads := make([]gin.H, 0, len(threadItems))
 	for _, thread := range threadItems {
-		item := gin.H{}
+		item := gin.H{
+			"employeeName": employeeName,
+		}
 		if thread.ThreadId != nil {
 			item["threadId"] = *thread.ThreadId
 		}

@@ -43,6 +43,8 @@ const ChatWindow = () => {
   const [pendingCloudAccountConfirm, setPendingCloudAccountConfirm] = useState(null);
   const [streamingMessage, setStreamingMessage] = useState(null);
   const [threadId, setThreadId] = useState(null);
+  const [activeThreadCloudAccountId, setActiveThreadCloudAccountId] = useState('');
+  const [activeThreadEmployeeName, setActiveThreadEmployeeName] = useState('');
   const [autoScroll, setAutoScroll] = useState(true); // 是否自动滚动
   const [shareCopied, setShareCopied] = useState(false); // 分享链接是否已复制
   const [threads, setThreads] = useState([]); // Thread 列表
@@ -58,6 +60,7 @@ const ChatWindow = () => {
   const shareTimeoutRef = useRef(null);
   const requestedCloudAccountId = searchParams.get('cloudAccountId') || '';
   const selectedCloudAccountId = employee?.cloudAccountId || requestedCloudAccountId;
+  const displayCloudAccountId = activeThreadCloudAccountId || selectedCloudAccountId;
 
   // Load employee data on mount
   useEffect(() => {
@@ -66,6 +69,8 @@ const ChatWindow = () => {
         setEmployeeLoading(true);
         const employeeData = await getEmployee(employeeId, requestedCloudAccountId);
         setEmployee(employeeData);
+        setActiveThreadCloudAccountId('');
+        setActiveThreadEmployeeName('');
       } catch (err) {
         console.error('Failed to load employee:', err);
         // If employee not found, redirect to employee selector
@@ -86,7 +91,9 @@ const ChatWindow = () => {
     
     try {
       setThreadsLoading(true);
-      const threadList = await listThreads(employee.name, selectedCloudAccountId, {
+      const listEmployeeName = activeThreadEmployeeName || employee.name;
+      const listCloudAccountId = activeThreadCloudAccountId || selectedCloudAccountId;
+      const threadList = await listThreads(listEmployeeName, listCloudAccountId, {
         limit: 10,
         includeQuestionPreview: true,
       });
@@ -96,7 +103,7 @@ const ChatWindow = () => {
     } finally {
       setThreadsLoading(false);
     }
-  }, [employee, selectedCloudAccountId]);
+  }, [activeThreadCloudAccountId, activeThreadEmployeeName, employee, selectedCloudAccountId]);
 
   // Load thread list when employee is loaded
   useEffect(() => {
@@ -191,8 +198,17 @@ const ChatWindow = () => {
   };
 
   // Handle thread selection
-  const handleThreadSelect = async (selectedThreadId) => {
+  const handleThreadSelect = async (selectedThread) => {
+    const selectedThreadId = typeof selectedThread === 'string'
+      ? selectedThread
+      : selectedThread?.threadId;
     if (selectedThreadId === threadId) return;
+    const selectedThreadCloudAccountId = typeof selectedThread === 'object'
+      ? selectedThread.cloudAccountId || activeThreadCloudAccountId || selectedCloudAccountId
+      : activeThreadCloudAccountId || selectedCloudAccountId;
+    const selectedThreadEmployeeName = typeof selectedThread === 'object'
+      ? selectedThread.employeeName || activeThreadEmployeeName || employee.name
+      : activeThreadEmployeeName || employee.name;
     
     if (loading) {
       // If currently loading, abort the request
@@ -209,10 +225,12 @@ const ChatWindow = () => {
       setStreamingMessage(null);
       
       // Load messages for the selected thread
-      const backendMessages = await getThreadMessages(employee.name, selectedThreadId, selectedCloudAccountId);
+      const backendMessages = await getThreadMessages(selectedThreadEmployeeName, selectedThreadId, selectedThreadCloudAccountId);
       const convertedMessages = convertBackendMessages(backendMessages);
       setMessages(convertedMessages);
       setThreadId(selectedThreadId);
+      setActiveThreadCloudAccountId(selectedThreadCloudAccountId);
+      setActiveThreadEmployeeName(selectedThreadEmployeeName);
       
       // Scroll to bottom after loading
       setTimeout(() => {
@@ -230,6 +248,8 @@ const ChatWindow = () => {
   const handleNewThread = () => {
     setMessages([]);
     setThreadId(null);
+    setActiveThreadCloudAccountId('');
+    setActiveThreadEmployeeName('');
     setError(null);
     setPendingCloudAccountConfirm(null);
     setStreamingMessage(null);
@@ -285,6 +305,8 @@ const ChatWindow = () => {
     let currentThreadId = pendingConfirmation?.threadId || threadId;
     const requestMessage = pendingConfirmation?.originalMessage || content;
     const requestCloudAccountId = isCloudAccountConfirmation ? content : selectedCloudAccountId;
+    let currentCloudAccountId = activeThreadCloudAccountId || requestCloudAccountId;
+    let currentEmployeeName = activeThreadEmployeeName || employee.name;
     const questionPreview = !isCloudAccountConfirmation
       ? normalizeThreadPreview(requestMessage)
       : '';
@@ -295,13 +317,31 @@ const ChatWindow = () => {
           employee.name,
           questionPreview,
           questionPreview ? { firstUserQuestion: questionPreview } : {},
-          selectedCloudAccountId
+          requestCloudAccountId,
+          requestMessage
         );
         currentThreadId = threadData.threadId;
+        currentCloudAccountId = threadData.cloudAccountId || requestCloudAccountId;
+        currentEmployeeName = threadData.employeeName || employee.name;
         setThreadId(currentThreadId);
+        setActiveThreadCloudAccountId(currentCloudAccountId);
+        setActiveThreadEmployeeName(currentEmployeeName);
         // Reload thread list after creating new thread
         refreshThreadList();
       } catch (err) {
+        if (err.needConfirm) {
+          const options = Array.isArray(err.options) ? err.options : [];
+          setPendingCloudAccountConfirm({
+            originalMessage: requestMessage,
+            threadId: currentThreadId,
+            options,
+          });
+          setError(null);
+          setLoading(false);
+          setStreamingMessage(null);
+          abortControllerRef.current = null;
+          return;
+        }
         setError('创建会话失败: ' + err.message);
         setLoading(false);
         setStreamingMessage(null);
@@ -319,10 +359,10 @@ const ChatWindow = () => {
 
     // Send to backend with SSE streaming
     await sendChatMessageStream(
-      employee.name,
+      currentEmployeeName,
       currentThreadId,
       requestMessage,
-      requestCloudAccountId,
+      currentCloudAccountId,
       // onMeta: handle meta info
       (receivedThreadId) => {
         if (receivedThreadId && !threadId) {
@@ -639,14 +679,16 @@ const ChatWindow = () => {
     const baseUrl = window.location.href.split('#')[0];
     (async () => {
       try {
-        const shareData = await createShareLink(employee.name, threadId, selectedCloudAccountId);
+        const shareEmployeeName = activeThreadEmployeeName || employee.name;
+        const shareCloudAccountId = activeThreadCloudAccountId || selectedCloudAccountId;
+        const shareData = await createShareLink(shareEmployeeName, threadId, shareCloudAccountId);
         if (!shareData.shareToken) {
           throw new Error('share_token_missing');
         }
 
         const shareParams = new URLSearchParams();
         shareParams.set('shareToken', shareData.shareToken);
-        const shareUrl = `${baseUrl}#/share/${encodeURIComponent(employee.name)}/${encodeURIComponent(threadId)}?${shareParams.toString()}`;
+        const shareUrl = `${baseUrl}#/share/${encodeURIComponent(shareEmployeeName)}/${encodeURIComponent(threadId)}?${shareParams.toString()}`;
 
         const ok = await copyToClipboard(shareUrl);
         if (!ok) {
@@ -746,7 +788,7 @@ const ChatWindow = () => {
                   <button
                     key={thread.threadId}
                     className={`thread-item ${thread.threadId === threadId ? 'active' : ''}`}
-                    onClick={() => handleThreadSelect(thread.threadId)}
+                    onClick={() => handleThreadSelect(thread)}
                     title={formatThreadTitle(thread)}
                   >
                     <span className="thread-title">{formatThreadTitle(thread)}</span>
@@ -766,8 +808,8 @@ const ChatWindow = () => {
               ← 返回
             </button>
             <h2>{employee.displayName || employee.name}</h2>
-            {selectedCloudAccountId && (
-              <span className="chat-account-badge">{selectedCloudAccountId}</span>
+            {displayCloudAccountId && (
+              <span className="chat-account-badge">{displayCloudAccountId}</span>
             )}
           </div>
           <div className="header-buttons">

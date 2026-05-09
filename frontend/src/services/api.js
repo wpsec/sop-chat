@@ -203,17 +203,29 @@ export const updateEmployee = async (employeeName, employeeData, cloudAccountId 
  * @param {Object} attributes - Thread attributes
  * @returns {Promise} Created thread info
  */
-export const createThread = async (employeeName, title = '', attributes = {}, cloudAccountId = '') => {
+export const createThread = async (employeeName, title = '', attributes = {}, cloudAccountId = '', message = '') => {
   try {
-    const response = await apiClient.post('/api/threads', {
+    const requestBody = {
       employeeName,
       cloudAccountId,
       title,
       attributes,
-    });
+    };
+    if (message) {
+      requestBody.message = message;
+    }
+    const response = await apiClient.post('/api/threads', requestBody);
     return response.data;
   } catch (error) {
-    throw new Error(error.response?.data?.detail || '创建会话失败');
+    const errorData = error.response?.data;
+    const message = errorData?.detail || errorData?.error || '创建会话失败';
+    const wrapped = new Error(message);
+    if (errorData && typeof errorData === 'object') {
+      wrapped.needConfirm = errorData.needConfirm === true;
+      wrapped.options = Array.isArray(errorData.options) ? errorData.options : [];
+      wrapped.detail = typeof errorData.detail === 'string' ? errorData.detail : '';
+    }
+    throw wrapped;
   }
 };
 

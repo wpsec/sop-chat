@@ -114,6 +114,8 @@ type Bot struct {
 	workerQueues sync.Map
 	// key（会话+发送者）-> 当前正在执行的任务，用于响应取消命令
 	runningTasks sync.Map
+	// key（账号+产品+员工名）-> 已校验员工名，避免每轮消息重复探测。
+	employeeRouteCache sync.Map
 
 	// Stream 客户端生命周期（Start/Stop 时持有锁）
 	cliMu sync.Mutex
@@ -780,7 +782,14 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 			cancel()
 		}()
 
-		threadId, err := b.getOrCreateThreadIdWithRoute(conversationId, senderNick, route)
+		workRoute, err := b.ensureRouteEmployeeName(route)
+		if err != nil {
+			log.Printf("[DingTalk] 解析数字员工失败: %v", err)
+			replyError(asyncCtx, webhook, err)
+			return
+		}
+
+		threadId, err := b.getOrCreateThreadIdWithRoute(conversationId, senderNick, workRoute)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				log.Printf("[DingTalk] 分析已取消，线程初始化中止 conversationId=%s sender=%s", conversationId, senderNick)
@@ -791,12 +800,12 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 			return
 		}
 
-		log.Printf("[DingTalk] 正在调用数字员工 employeeName=%s threadId=%q ...", route.employeeName, threadId)
+		log.Printf("[DingTalk] 正在调用数字员工 employeeName=%s threadId=%q ...", workRoute.employeeName, threadId)
 
 		// 尝试流式卡片回复
 		cfg := b.config()
 		if cfg.CardTemplateId != "" {
-			err := b.replyWithStreamingCard(asyncCtx, webhook, route, userText, threadId, conversationId, conversationType, senderId, senderStaffId, senderNick, msgId)
+			err := b.replyWithStreamingCard(asyncCtx, webhook, workRoute, userText, threadId, conversationId, conversationType, senderId, senderStaffId, senderNick, msgId)
 			if err == nil {
 				log.Printf("[DingTalk] 流式卡片回复完成")
 				return
@@ -819,15 +828,15 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 			}
 		}
 
-		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, route, onUpdate)
+		replyText, newThreadId, err := b.queryEmployeeStreaming(asyncCtx, userText, threadId, workRoute, onUpdate)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				log.Printf("[DingTalk] 分析已取消 conversationId=%s sender=%s", conversationId, senderNick)
-				b.evictThreadForRoute(conversationId, senderNick, route)
+				b.evictThreadForRoute(conversationId, senderNick, workRoute)
 				return
 			}
 			if errors.Is(err, errEmptyEmployeeReply) {
-				b.evictThreadForRoute(conversationId, senderNick, route)
+				b.evictThreadForRoute(conversationId, senderNick, workRoute)
 			}
 			log.Printf("[DingTalk] 调用数字员工失败: %v", err)
 			replyError(asyncCtx, webhook, err)
@@ -837,8 +846,8 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 
 		if newThreadId != "" && newThreadId != threadId {
 			log.Printf("[DingTalk] 线程 ID 变更: %q -> %q，更新映射", threadId, newThreadId)
-			scope := threadScope(route.cloudAccountID, route.project, route.workspace, route.region)
-			cacheKey := threadKey(conversationId, senderNick, route.employeeName) + "\x00" + scope
+			scope := threadScope(workRoute.cloudAccountID, workRoute.project, workRoute.workspace, workRoute.region)
+			cacheKey := threadKey(conversationId, senderNick, workRoute.employeeName) + "\x00" + scope
 			b.threads.Store(cacheKey, newThreadId)
 		}
 
@@ -848,7 +857,7 @@ func (b *Bot) onMessage(ctx context.Context, data *chatbot.BotCallbackDataModel)
 		if strings.TrimSpace(finalThreadId) == "" {
 			finalThreadId = threadId
 		}
-		shareURL := b.buildShareURL(route, finalThreadId)
+		shareURL := b.buildShareURL(workRoute, finalThreadId)
 		finalReplyText := appendShareSentence(replyText, shareURL)
 
 		var replyErr error
@@ -1193,6 +1202,51 @@ func (b *Bot) resolveRoute(conversationType, conversationTitle, message string) 
 		result.product = result.clientConfig.Product
 	}
 	return result
+}
+
+func (b *Bot) ensureRouteEmployeeName(route resolvedRoute) (resolvedRoute, error) {
+	preferred := strings.TrimSpace(route.employeeName)
+	if preferred == "" {
+		return route, fmt.Errorf("数字员工名称为空，请检查钉钉渠道配置")
+	}
+	if route.clientConfig == nil {
+		return route, fmt.Errorf("cloudAccountId=%q 的 CMS 客户端配置为空", route.cloudAccountID)
+	}
+
+	cacheKey := routeEmployeeCacheKey(route.cloudAccountID, route.product, preferred)
+	if cached, ok := b.employeeRouteCache.Load(cacheKey); ok {
+		route.employeeName = cached.(string)
+		return route, nil
+	}
+
+	client, err := b.newSopClientWithConfig(route.clientConfig)
+	if err != nil {
+		return route, err
+	}
+	if _, err := client.GetEmployee(preferred); err == nil {
+		b.employeeRouteCache.Store(cacheKey, preferred)
+		return route, nil
+	} else if !isDigitalEmployeeNotExist(err) {
+		log.Printf("[DingTalk] 校验数字员工失败 employee=%s cloudAccountId=%s: %v", preferred, route.cloudAccountID, err)
+		return route, nil
+	}
+
+	return route, fmt.Errorf(
+		"cloudAccountId=%q 下找不到数字员工 %q，请检查 channels.dingtalk.cloudAccountRoutes 的 employeeName 或 RAM 是否授权该员工",
+		route.cloudAccountID,
+		preferred,
+	)
+}
+
+func routeEmployeeCacheKey(cloudAccountID, product, employeeName string) string {
+	return config.NormalizeCloudAccountID(cloudAccountID) + "\x00" +
+		strings.TrimSpace(strings.ToLower(product)) + "\x00" +
+		strings.TrimSpace(employeeName)
+}
+
+func isDigitalEmployeeNotExist(err error) bool {
+	var sdkErr *tea.SDKError
+	return errors.As(err, &sdkErr) && tea.StringValue(sdkErr.Code) == "DigitalEmployeeNotExist"
 }
 
 func promptForRouteLog(message string) string {

@@ -150,6 +150,90 @@ func collectConfiguredEmployeeRefs(globalCfg *config.Config, requestedCloudAccou
 	return result
 }
 
+func findRoutedConfiguredEmployeeRef(globalCfg *config.Config, employeeName, requestedCloudAccountID string) *configuredEmployeeRef {
+	if globalCfg == nil || globalCfg.Channels == nil {
+		return nil
+	}
+
+	normalizedName := strings.TrimSpace(employeeName)
+	if normalizedName == "" {
+		return nil
+	}
+	targetAccountID := config.NormalizeCloudAccountID(requestedCloudAccountID)
+	legacyDefaults := globalCfg.GetLegacyProductContext()
+
+	findInChannel := func(baseEmployeeName, baseCloudAccountID string, base config.ProductContext, routes []config.CloudAccountRoute) *configuredEmployeeRef {
+		if !channelHasEmployee(baseEmployeeName, routes, normalizedName) {
+			return nil
+		}
+		if route := config.FindCloudAccountRoute(routes, targetAccountID); route != nil {
+			routeEmployeeName := strings.TrimSpace(route.EmployeeName)
+			if routeEmployeeName != "" {
+				ctx := config.MergeProductContext(base, route.Product, route.Project, route.Workspace, route.Region)
+				return &configuredEmployeeRef{
+					CloudAccountID: targetAccountID,
+					EmployeeName:   routeEmployeeName,
+					Product:        ctx.Product,
+					Project:        ctx.Project,
+					Workspace:      ctx.Workspace,
+					Region:         ctx.Region,
+				}
+			}
+		}
+		if strings.TrimSpace(baseEmployeeName) == normalizedName &&
+			config.NormalizeCloudAccountID(baseCloudAccountID) == targetAccountID {
+			return &configuredEmployeeRef{
+				CloudAccountID: targetAccountID,
+				EmployeeName:   normalizedName,
+				Product:        base.Product,
+				Project:        base.Project,
+				Workspace:      base.Workspace,
+				Region:         base.Region,
+			}
+		}
+		return nil
+	}
+
+	for _, dt := range globalCfg.Channels.DingTalk {
+		base := config.MergeProductContext(legacyDefaults, dt.Product, dt.Project, dt.Workspace, dt.Region)
+		if ref := findInChannel(dt.EmployeeName, dt.CloudAccountID, base, dt.CloudAccountRoutes); ref != nil {
+			return ref
+		}
+	}
+	for _, ft := range globalCfg.Channels.Feishu {
+		base := config.MergeProductContext(legacyDefaults, ft.Product, ft.Project, ft.Workspace, ft.Region)
+		if ref := findInChannel(ft.EmployeeName, ft.CloudAccountID, base, ft.CloudAccountRoutes); ref != nil {
+			return ref
+		}
+	}
+	for _, wc := range globalCfg.Channels.WeCom {
+		base := config.MergeProductContext(legacyDefaults, wc.Product, wc.Project, wc.Workspace, wc.Region)
+		if ref := findInChannel(wc.EmployeeName, wc.CloudAccountID, base, wc.CloudAccountRoutes); ref != nil {
+			return ref
+		}
+	}
+	for _, wb := range globalCfg.Channels.WeComBot {
+		base := config.MergeProductContext(legacyDefaults, wb.Product, wb.Project, wb.Workspace, wb.Region)
+		if ref := findInChannel(wb.EmployeeName, wb.CloudAccountID, base, wb.CloudAccountRoutes); ref != nil {
+			return ref
+		}
+	}
+
+	return nil
+}
+
+func channelHasEmployee(baseEmployeeName string, routes []config.CloudAccountRoute, employeeName string) bool {
+	if strings.TrimSpace(baseEmployeeName) == employeeName {
+		return true
+	}
+	for _, route := range routes {
+		if strings.TrimSpace(route.EmployeeName) == employeeName {
+			return true
+		}
+	}
+	return false
+}
+
 func findConfiguredEmployeeRef(globalCfg *config.Config, employeeName, requestedCloudAccountID string) *configuredEmployeeRef {
 	normalizedName := strings.TrimSpace(employeeName)
 	if normalizedName == "" {

@@ -114,7 +114,7 @@ func (s *Server) handleChatStream(c *gin.Context) {
 
 	// 创建聊天请求
 	request := &cmsclient.CreateChatRequest{
-		DigitalEmployeeName: tea.String(req.EmployeeName),
+		DigitalEmployeeName: tea.String(runtimeCfg.EmployeeName),
 		ThreadId:            tea.String(req.ThreadId),
 		Action:              tea.String("create"),
 		Messages: []*cmsclient.CreateChatRequestMessages{

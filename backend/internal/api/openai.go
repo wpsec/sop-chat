@@ -313,7 +313,7 @@ func (s *Server) handleOpenAIChatCompletions(c *gin.Context) {
 
 	// 如果没有提供 thread_id，自动创建新线程
 	if threadID == "" {
-		newThreadID, err := s.createOpenAIThread(employeeName, runtimeCfg)
+		newThreadID, err := s.createOpenAIThread(runtimeCfg)
 		if err != nil {
 			log.Printf("[OpenAI] 创建线程失败 employee=%s: %v", employeeName, err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -332,7 +332,7 @@ func (s *Server) handleOpenAIChatCompletions(c *gin.Context) {
 }
 
 // createOpenAIThread 为 OpenAI 请求创建新线程
-func (s *Server) createOpenAIThread(employeeName string, runtimeCfg *employeeRuntime) (string, error) {
+func (s *Server) createOpenAIThread(runtimeCfg *employeeRuntime) (string, error) {
 	if runtimeCfg == nil || runtimeCfg.ClientConfig == nil {
 		return "", fmt.Errorf("运行时配置缺失")
 	}
@@ -342,7 +342,7 @@ func (s *Server) createOpenAIThread(employeeName string, runtimeCfg *employeeRun
 	}
 
 	resp, err := cmsClient.CreateThread(&sopchat.ThreadConfig{
-		EmployeeName: employeeName,
+		EmployeeName: runtimeCfg.EmployeeName,
 		Title:        fmt.Sprintf("OpenAI API: %s", time.Now().Format("2006-01-02 15:04:05")),
 		Project:      runtimeCfg.Context.Project,
 		Workspace:    runtimeCfg.Context.Workspace,
@@ -450,7 +450,7 @@ func (s *Server) handleOpenAIStreamResponse(c *gin.Context, employeeName, thread
 	// 发送角色 delta
 	sendChunk("", nil, "")
 
-	request := s.buildChatRequest(employeeName, threadID, message, runtimeCfg.Context)
+	request := s.buildChatRequest(runtimeCfg.EmployeeName, threadID, message, runtimeCfg.Context)
 	responseChan := make(chan *cmsclient.CreateChatResponse)
 	errorChan := make(chan error)
 
@@ -530,7 +530,7 @@ func (s *Server) handleOpenAINonStreamResponse(c *gin.Context, employeeName, thr
 		return
 	}
 
-	request := s.buildChatRequest(employeeName, threadID, message, runtimeCfg.Context)
+	request := s.buildChatRequest(runtimeCfg.EmployeeName, threadID, message, runtimeCfg.Context)
 	responseChan := make(chan *cmsclient.CreateChatResponse)
 	errorChan := make(chan error)
 

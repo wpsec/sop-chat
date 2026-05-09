@@ -112,3 +112,61 @@ func TestFindUniqueConfiguredEmployeeRefByName(t *testing.T) {
 		t.Fatalf("expected uat cloud account, got %+v", ref)
 	}
 }
+
+func TestResolveEmployeeRuntimeRoutesBaseEmployeeToCloudAccountRoute(t *testing.T) {
+	globalCfg := &config.Config{
+		Global: config.GlobalConfig{
+			Product: "sls",
+		},
+		CloudAccounts: []config.CloudAccountConfig{
+			{
+				ID:              "uat",
+				Aliases:         []string{"uat"},
+				AccessKeyId:     "uat-ak",
+				AccessKeySecret: "uat-sk",
+				Endpoint:        "cms.cn-shanghai.aliyuncs.com",
+			},
+			{
+				ID:              "dev",
+				Aliases:         []string{"dev", "dev环境"},
+				AccessKeyId:     "dev-ak",
+				AccessKeySecret: "dev-sk",
+				Endpoint:        "cms.cn-shanghai.aliyuncs.com",
+			},
+		},
+		Channels: &config.ChannelsConfig{
+			DingTalk: []config.DingTalkConfig{
+				{
+					EmployeeName:   "sls-ops-assistant",
+					CloudAccountID: "uat",
+					Product:        "sls",
+					CloudAccountRoutes: []config.CloudAccountRoute{
+						{
+							CloudAccountID: "dev",
+							EmployeeName:   "intelligent-ops-assistant",
+							Project:        "dev-project",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	server := &Server{globalConfig: globalCfg}
+	runtimeCfg, options, err := server.resolveEmployeeRuntime("sls-ops-assistant", "dev", "分析一下 dev环境 pod 重启原因")
+	if err != nil {
+		t.Fatalf("resolveEmployeeRuntime returned error: %v", err)
+	}
+	if len(options) != 0 {
+		t.Fatalf("expected no confirmation options, got %v", options)
+	}
+	if runtimeCfg.CloudAccountID != "dev" {
+		t.Fatalf("expected dev cloud account, got %+v", runtimeCfg)
+	}
+	if runtimeCfg.EmployeeName != "intelligent-ops-assistant" {
+		t.Fatalf("expected routed employee, got %+v", runtimeCfg)
+	}
+	if runtimeCfg.Context.Project != "dev-project" {
+		t.Fatalf("expected route project, got %+v", runtimeCfg.Context)
+	}
+}
